@@ -660,7 +660,6 @@
       top: 0; left: 0;
       width: 0; height: 0;
       transform-origin: 0 0;
-      will-change: transform;
     }
 
     /* ── Base node ── */
@@ -695,25 +694,16 @@
       line-height: 0;
     }
     .img-node .img-origin-label {
-      position: absolute;
-      top: 6px;
-      left: 6px;
-      right: 6px;
-      max-width: calc(100% - 12px);
-      z-index: 5;
-      pointer-events: none;
-      display: block;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       font-size: 11px;
       font-weight: 500;
       line-height: 1.35;
-      color: #fff;
-      background: rgba(17, 24, 39, 0.62);
-      border-radius: 5px;
-      padding: 3px 6px;
-      backdrop-filter: blur(6px);
+      color: #4b5563;
+      margin: 0 0 4px 1px;
+      pointer-events: none;
     }
     .img-node img {
       width: 100%;
@@ -1970,21 +1960,23 @@
     /* Send button now lives in the bottom toolbar (per reference design), so
        the textarea no longer reserves a bottom-right safe area. The mention
        overlay MUST share the textarea's padding so @-token rects line up. */
-    .composer-mid .mention-layer {
-      position: absolute;
-      inset: 0;
-      z-index: 0;
+    .composer-mid .prompt-editor {
+      position: relative;
+      flex: 1 1 auto;
       padding: 8px clamp(8px, 2.5vw, 12px);
       font-size: 15px;
       line-height: 1.5;
       font-family: var(--font-sans);
+      caret-color: var(--text);
       color: var(--text);
       white-space: pre-wrap;
-      word-wrap: break-word;
-      overflow: hidden;
-      pointer-events: none;
-      border: 1px solid transparent;
-      box-sizing: border-box;
+      word-break: break-word;
+      overflow: auto;
+      min-height: 78px;
+      max-height: 170px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
     }
     /* The textarea sits on top; we colour the text of the @… range with a
        link-blue tint by adding a thin border-bottom via gradient. Since the
@@ -1992,7 +1984,7 @@
        using the textarea's selection colour for "@" tokens via JS overlay
        above won't work — instead we lean on box-shadow + bg of the layer to
        hint the pill. The text color stays inherited (--text). */
-    .composer-mid textarea#prompt-input {
+    .composer-mid textarea#prompt-input.prompt-hidden-canonical {
       position: relative;
       flex: 1 1 auto;
       background: transparent;                  /* let cream composer surface show through */
@@ -2008,8 +2000,24 @@
       color: transparent;
       z-index: 1;
     }
-    .composer-mid textarea#prompt-input:focus { outline: none; }
-    .composer-mid textarea#prompt-input::placeholder { color: var(--muted); }
+    .composer-mid .prompt-editor:focus { outline: none; }
+    .composer-mid .prompt-editor:empty::before {
+      content: attr(data-placeholder);
+      color: var(--muted);
+      pointer-events: none;
+    }
+    .composer-mid textarea#prompt-input.prompt-hidden-canonical {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+      resize: none;
+      overflow: hidden;
+    }
 
     /* Send button — Lovable's signature "Primary Dark (Inset Shadow)" applied
        as a pill icon button. Charcoal fill, off-white arrow, multi-layer inset
@@ -2208,7 +2216,7 @@
     }
     .pop-mention-item .pmi-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .pop-mention-item .pmi-tag {
-      color: #dc2626;
+      color: var(--muted);
       font-size: 12px;
       font-weight: 600;
     }
@@ -2928,39 +2936,70 @@
     #pop-model select:focus { outline: none; box-shadow: var(--shadow-focus); }
 
     /* — Mention tokens — keep neutral charcoal, not bright blue ——————————————————— */
-    .composer-mid .mention-layer .mention-tok {
-      display: inline;
-      height: auto;
-      line-height: inherit;
-      padding: 0;
-      font-weight: inherit;
-      white-space: pre-wrap;
-      vertical-align: baseline;
-      pointer-events: none;
-      background: rgba(220, 38, 38, 0.08);
-      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.26) inset;
-      color: #dc2626;
-      border-radius: var(--radius-xs);
+    .prompt-ref-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: min(180px, 70vw);
+      margin: 0 2px;
+      padding: 2px 7px 2px 3px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1;
+      vertical-align: -5px;
+      white-space: nowrap;
+      user-select: none;
     }
-    .composer-mid .mention-layer .mention-tok.tok-marker {
-      background: rgba(220, 38, 38, 0.10);
-      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.34) inset;
+    .prompt-ref-chip .prc-thumb {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--panel-bg);
+      color: var(--muted);
     }
-    .composer-mid .mention-layer .mention-tok.tok-missing {
-      background: rgba(220, 38, 38, 0.06);
-      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.18) inset;
-      opacity: .5;
+    .prompt-ref-chip .prc-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
     }
-    body.theme-dark .composer-mid .mention-layer .mention-tok {
-      background: rgba(248, 113, 113, 0.14);
-      box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.34) inset;
-      color: #f87171;
+    .prompt-ref-chip .prc-thumb.is-marker { position: relative; }
+    .prompt-ref-chip .prc-thumb .mk-num {
+      position: absolute;
+      right: -1px;
+      bottom: -1px;
+      min-width: 12px;
+      height: 12px;
+      padding: 0 2px;
+      border-radius: 999px;
+      background: var(--text);
+      color: var(--panel-bg);
+      font-size: 8px;
+      line-height: 12px;
+      text-align: center;
     }
-    body.theme-dark .composer-mid .mention-layer .mention-tok.tok-marker {
-      background: rgba(248, 113, 113, 0.18);
-      box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.42) inset;
+    .prompt-ref-chip .prc-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12px;
+      color: var(--muted);
     }
-    body.theme-dark .pop-mention-item .pmi-tag { color: #f87171; }
+    .prompt-ref-chip.is-missing { opacity: .58; }
+    body.theme-dark .composer-mid .prompt-ref-chip {
+      background: var(--surface-soft);
+      border-color: var(--border);
+      color: var(--muted);
+    }
+    body.theme-dark .pop-mention-item .pmi-tag { color: var(--muted); }
     #mention-tooltip {
       position: fixed;
       display: none;
@@ -3167,8 +3206,8 @@
       <!-- Top row: textarea + mention overlay, full-width (no left card) -->
       <div class="composer-top">
         <div class="composer-mid" id="composer-mid">
-          <div class="mention-layer" id="mention-layer" aria-hidden="true"></div>
-          <textarea id="prompt-input" placeholder="描述你想生成的画面，输入 @ 可引用画布中的图片或标记..." maxlength="2000"></textarea>
+          <div id="prompt-editor" class="prompt-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="描述你想生成的画面，输入 @ 可引用画布中的图片或标记..."></div>
+          <textarea id="prompt-input" class="prompt-hidden-canonical" maxlength="2000" aria-hidden="true" tabindex="-1"></textarea>
           <!-- Hidden char counter (maxlength still enforced); not shown in UI per reference design. -->
           <span id="char-count" hidden>0/2000</span>
         </div>
@@ -4874,7 +4913,6 @@ function createImageNode(url, name, x, y, restoreId, restoreSize, restoreMarkers
 
   imgWrap.appendChild(spinner);
   imgWrap.appendChild(img);
-  if (originEl) imgWrap.appendChild(originEl);
   imgWrap.appendChild(pinLayer);
 
   // Per-node deferred marker-placement timer. A single click in marking mode is
@@ -4935,6 +4973,7 @@ function createImageNode(url, name, x, y, restoreId, restoreSize, restoreMarkers
   // Resize handles are now drawn in the screen-space #canvas-overlay layer
   // (see renderSelectionOverlay / beginOverlayResize). No per-node handle DOM.
 
+  if (originEl) el.appendChild(originEl);
   el.appendChild(imgWrap);
   el.appendChild(nameEl);
   world.appendChild(el);
@@ -6143,23 +6182,50 @@ function renderRefBar() {
 // @ MENU
 // ═══════════════════════════════════════════════
 const promptInput = document.getElementById('prompt-input');
+const promptEditor = document.getElementById('prompt-editor');
 const atMenu      = document.getElementById('at-menu');
 
-promptInput.addEventListener('input', handlePromptInput);
-promptInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') hideAtMenu();
-});
+if (promptEditor) {
+  promptEditor.addEventListener('input', handlePromptInput);
+  promptEditor.addEventListener('keydown', handlePromptEditorKeydown);
+  promptEditor.addEventListener('paste', handlePromptEditorPaste);
+}
+if (promptInput) {
+  promptInput.addEventListener('input', () => {
+    if (document.activeElement !== promptEditor) renderPromptEditorFromValue(promptInput.value || '');
+    updateCharCount();
+  });
+}
+
+function handlePromptEditorKeydown(e) {
+  if (e.key === 'Escape') { hideAtMenu(); return; }
+  if ((e.key === 'Backspace' || e.key === 'Delete') && _deleteAdjacentPromptChip(e.key)) {
+    e.preventDefault();
+    _syncPromptFromEditor();
+    updateCharCount();
+  }
+}
+
+function handlePromptEditorPaste(e) {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain') || '';
+  document.execCommand('insertText', false, text.slice(0, 2000));
+}
 
 function handlePromptInput() {
+  _syncPromptFromEditor();
   updateCharCount();
 
-  const pos    = promptInput.selectionStart;
+  const pos    = _getPromptCaretOffset();
   const before = promptInput.value.slice(0, pos);
   const atIdx  = before.lastIndexOf('@');
+  const isBareAtBeforeCaret = atIdx === pos - 1;
 
-  // show menu if @ found and no space after it before cursor
-  if (atIdx >= 0 && !before.slice(atIdx + 1).includes(' ') && !before.slice(atIdx + 1).includes('\n')) {
-    showAtMenu(before.slice(atIdx + 1).toLowerCase());
+  // Show the ref menu only immediately after a bare "@". If the user keeps
+  // typing (for example "生成一张@这个字符的照片"), treat @ as literal text and
+  // close the picker instead of keeping it sticky.
+  if (atIdx >= 0 && isBareAtBeforeCaret) {
+    showAtMenu('', 'composer');
   } else {
     hideAtMenu();
   }
@@ -6200,11 +6266,12 @@ function getAtItems() {
   return items;
 }
 
-function showAtMenu(query) {
+function showAtMenu(query, source) {
   // Open the unified mention popover, filtered by `query`.
   _atActiveQuery = (query || '').toLowerCase();
   renderPopMention(_atActiveQuery);
-  openPop('mention');
+  if (source === 'composer') openPop('mention', _mentionComposerAnchor());
+  else openPop('mention');
 }
 
 function hideAtMenu() {
@@ -6212,6 +6279,249 @@ function hideAtMenu() {
 }
 
 let _atActiveQuery = '';
+
+function _mentionComposerAnchor() {
+  return document.getElementById('prompt-editor') || document.getElementById('composer-mid') || document.getElementById('composer');
+}
+
+function _promptTokenText(label) {
+  return '@' + String(label || '');
+}
+
+function _promptTokenLength(label) {
+  return _promptTokenText(label).length;
+}
+
+function _appendPromptChipThumb(chip, ref) {
+  const thumb = document.createElement('span');
+  thumb.className = 'prc-thumb' + (ref && ref.type === 'marker' ? ' is-marker' : '');
+  if (ref && ref.type === 'video') {
+    thumb.innerHTML = '<svg width="13" height="13" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+  } else if (ref && ref.url) {
+    const img = document.createElement('img');
+    img.src = ref.url;
+    img.alt = ref.name || ref.label || '';
+    thumb.appendChild(img);
+  } else {
+    thumb.textContent = '@';
+  }
+  if (ref && ref.type === 'marker') {
+    const num = document.createElement('span');
+    num.className = 'mk-num';
+    num.textContent = String(ref.markerNumber || '?');
+    thumb.appendChild(num);
+  }
+  chip.appendChild(thumb);
+}
+
+function _createPromptRefChip(label) {
+  const ref = _findRefByLabel(label);
+  const chip = document.createElement('span');
+  chip.className = 'prompt-ref-chip' + (ref ? '' : ' is-missing');
+  chip.setAttribute('contenteditable', 'false');
+  chip.dataset.label = label;
+  chip.title = _promptTokenText(label);
+  _appendPromptChipThumb(chip, ref);
+  const labelEl = document.createElement('span');
+  labelEl.className = 'prc-label';
+  labelEl.textContent = label;
+  chip.appendChild(labelEl);
+  return chip;
+}
+
+function _syncPromptFromEditor() {
+  if (!promptInput || !promptEditor) return '';
+  let text = '';
+  function isBlockNode(node) {
+    return node && node.nodeType === Node.ELEMENT_NODE &&
+      /^(DIV|P|LI|SECTION|ARTICLE|H[1-6])$/.test(node.tagName || '');
+  }
+  function appendNewlineIfNeeded() {
+    if (text && !text.endsWith('\n')) text += '\n';
+  }
+  function walk(node) {
+    if (!node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.nodeValue || '';
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.classList && node.classList.contains('prompt-ref-chip')) {
+      const label = node.dataset.label || '';
+      text += '@' + label;
+      return;
+    }
+    if (node.tagName === 'BR') {
+      text += '\n';
+      return;
+    }
+    const wasBlock = isBlockNode(node);
+    Array.from(node.childNodes || []).forEach(walk);
+    if (wasBlock) appendNewlineIfNeeded();
+  }
+  Array.from(promptEditor.childNodes || []).forEach(walk);
+  text = text.replace(/\n+$/, '');
+  if (text.length > 2000) text = text.slice(0, 2000);
+  promptInput.value = text;
+  return text;
+}
+
+function _getPromptCaretOffset() {
+  if (!promptEditor) return (promptInput && promptInput.value ? promptInput.value.length : 0);
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return promptInput.value.length;
+  const range = sel.getRangeAt(0);
+  if (!promptEditor.contains(range.startContainer)) return promptInput.value.length;
+  let offset = 0;
+  let found = false;
+  function walk(node) {
+    if (found || !node) return;
+    if (node === range.startContainer) {
+      if (node.nodeType === Node.TEXT_NODE) offset += range.startOffset;
+      else {
+        const kids = Array.from(node.childNodes || []);
+        for (let i = 0; i < range.startOffset; i++) offset += _canonicalLengthForNode(kids[i]);
+      }
+      found = true;
+      return;
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      offset += (node.nodeValue || '').length;
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.classList && node.classList.contains('prompt-ref-chip')) {
+      offset += _promptTokenLength(node.dataset.label || '');
+      return;
+    }
+    if (node.tagName === 'BR') {
+      offset += 1;
+      return;
+    }
+    Array.from(node.childNodes || []).forEach(walk);
+  }
+  Array.from(promptEditor.childNodes || []).forEach(walk);
+  return offset;
+}
+
+function _canonicalLengthForNode(node) {
+  if (!node) return 0;
+  if (node.nodeType === Node.TEXT_NODE) return (node.nodeValue || '').length;
+  if (node.nodeType !== Node.ELEMENT_NODE) return 0;
+  if (node.classList && node.classList.contains('prompt-ref-chip')) return _promptTokenLength(node.dataset.label || '');
+  if (node.tagName === 'BR') return 1;
+  return Array.from(node.childNodes || []).reduce((sum, child) => sum + _canonicalLengthForNode(child), 0);
+}
+
+function _setPromptCaretByOffset(target) {
+  if (!promptEditor) return;
+  const range = document.createRange();
+  const sel = window.getSelection();
+  let offset = 0;
+  let placed = false;
+  function place(node, childIndex) {
+    range.setStart(node, childIndex);
+    range.collapse(true);
+    placed = true;
+  }
+  function walk(node) {
+    if (placed || !node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = (node.nodeValue || '').length;
+      if (target <= offset + len) place(node, Math.max(0, target - offset));
+      offset += len;
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.classList && node.classList.contains('prompt-ref-chip')) {
+      const len = _promptTokenLength(node.dataset.label || '');
+      if (target <= offset + len) {
+        const parent = node.parentNode || promptEditor;
+        place(parent, Array.prototype.indexOf.call(parent.childNodes, node) + 1);
+      }
+      offset += len;
+      return;
+    }
+    if (node.tagName === 'BR') {
+      if (target <= offset + 1) {
+        const parent = node.parentNode || promptEditor;
+        place(parent, Array.prototype.indexOf.call(parent.childNodes, node) + 1);
+      }
+      offset += 1;
+      return;
+    }
+    Array.from(node.childNodes || []).forEach(walk);
+  }
+  Array.from(promptEditor.childNodes || []).forEach(walk);
+  if (!placed) place(promptEditor, promptEditor.childNodes.length);
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
+function renderPromptEditorFromValue(value, caretOffset) {
+  if (!promptEditor) return;
+  const text = String(value || '');
+  promptEditor.innerHTML = '';
+  const re = _mentionTokenRegex();
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) promptEditor.appendChild(document.createTextNode(text.slice(last, m.index)));
+    promptEditor.appendChild(_createPromptRefChip(m[1] + m[2]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) promptEditor.appendChild(document.createTextNode(text.slice(last)));
+  if (typeof caretOffset === 'number') _setPromptCaretByOffset(caretOffset);
+}
+
+function _insertRefChipAtSelection(label) {
+  const canonical = promptInput.value || '';
+  const pos = document.activeElement === promptEditor ? _getPromptCaretOffset() : canonical.length;
+  const before = canonical.slice(0, pos);
+  const after = canonical.slice(pos);
+  const lastAt = before.lastIndexOf('@');
+  const isLiveQuery = lastAt >= 0 && !/\s/.test(before.slice(lastAt + 1));
+  const replaceStart = isLiveQuery ? lastAt : pos;
+  const leftSegment = canonical.slice(0, replaceStart);
+  const needsLeadSpace = !isLiveQuery && leftSegment.length > 0 && !/\s/.test(leftSegment.slice(-1));
+  const inserted = (needsLeadSpace ? ' ' : '') + _promptTokenText(label) + ' ';
+  promptInput.value = leftSegment + inserted + after;
+  renderPromptEditorFromValue(promptInput.value, replaceStart + inserted.length);
+  return promptInput.value;
+}
+
+function _deleteAdjacentPromptChip(key) {
+  if (!promptEditor || document.activeElement !== promptEditor) return false;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  let node = range.startContainer;
+  let offset = range.startOffset;
+  if (!promptEditor.contains(node)) return false;
+
+  function removeChip(chip) {
+    if (!chip || !chip.classList || !chip.classList.contains('prompt-ref-chip')) return false;
+    const parent = chip.parentNode;
+    const idx = Array.prototype.indexOf.call(parent.childNodes, chip);
+    chip.remove();
+    const r = document.createRange();
+    r.setStart(parent, Math.min(idx, parent.childNodes.length));
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    return true;
+  }
+
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (key === 'Backspace' && offset === 0) return removeChip(node.previousSibling);
+    if (key === 'Delete' && offset === (node.nodeValue || '').length) return removeChip(node.nextSibling);
+    return false;
+  }
+  const kids = Array.from(node.childNodes || []);
+  return key === 'Backspace' ? removeChip(kids[offset - 1]) : removeChip(kids[offset]);
+}
 
 // Render the pop-mention list: shows refs (deletable with ×) + un-referenced markers.
 function renderPopMention(query) {
@@ -6346,29 +6656,12 @@ function renderPopMention(query) {
 function _escapeRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 function insertAtRef(label) {
-  const pos    = promptInput.selectionStart;
-  const val    = promptInput.value;
-  const before = val.slice(0, pos);
-  const after  = val.slice(pos);
-  const lastAt = before.lastIndexOf('@');
-  // Treat the run after the most-recent '@' (within `before`) as a live
-  // mention-query ONLY if it contains no whitespace. Otherwise that '@' is
-  // already part of a completed token like "@图1 " and must NOT be clobbered
-  // when the user picks another ref from the popover or the "引用" button.
-  const isLiveQuery = lastAt >= 0 && !/\s/.test(before.slice(lastAt + 1));
-  const replaceStart = isLiveQuery ? lastAt : pos;
-  const leftSegment  = val.slice(0, replaceStart);
-  // Plain-insert mode: if the char immediately before our insertion point is
-  // not whitespace, prepend a space so we never produce "文字@图2".
-  const needsLeadSpace = !isLiveQuery && leftSegment.length > 0 && !/\s/.test(leftSegment.slice(-1));
-  const inserted = (needsLeadSpace ? ' ' : '') + '@' + label + ' ';
-  promptInput.value = leftSegment + inserted + after;
-  const newPos = replaceStart + inserted.length;
-  promptInput.selectionStart = promptInput.selectionEnd = newPos;
+  _insertRefChipAtSelection(label);
+  _syncPromptFromEditor();
   hideAtMenu();
   updateCharCount();
   try { renderMentionLayer(); } catch (e) {}
-  promptInput.focus();
+  if (promptEditor) promptEditor.focus();
 }
 
 // Close popovers on outside click
@@ -6378,7 +6671,7 @@ document.addEventListener('mousedown', (e) => {
   const anchor = document.getElementById('ic-' + _openPop);
   if (popEl && popEl.contains(e.target)) return;
   if (anchor && anchor.contains(e.target)) return;
-  if (_openPop === 'mention' && e.target === promptInput) return;
+  if (_openPop === 'mention' && promptEditor && promptEditor.contains(e.target)) return;
   closePop();
 });
 
@@ -6391,9 +6684,16 @@ document.addEventListener('keydown', (e) => {
 // COMPOSER: popovers (mode / model / size / advanced / mention / ref)
 // ═══════════════════════════════════════════════
 let _openPop = null;
+let _openPopAnchor = null;
 
-function openPop(name) {
-  if (_openPop === name) return;
+function openPop(name, anchorOverride) {
+  if (_openPop === name) {
+    const current = document.getElementById('pop-' + name);
+    const nextAnchor = anchorOverride || _openPopAnchor || document.getElementById('ic-' + name);
+    _openPopAnchor = nextAnchor || null;
+    if (current) _positionPop(current, nextAnchor);
+    return;
+  }
   closePop();
   const el = document.getElementById('pop-' + name);
   if (!el) return;
@@ -6402,8 +6702,10 @@ function openPop(name) {
   // Make visible (off-screen-ish via opacity) so we can measure, then position
   el.classList.add('show');
   _openPop = name;
-  const anchor = document.getElementById('ic-' + name);
-  if (anchor) anchor.classList.add('active');
+  const anchor = anchorOverride || document.getElementById('ic-' + name);
+  _openPopAnchor = anchor || null;
+  const iconAnchor = document.getElementById('ic-' + name);
+  if (iconAnchor) iconAnchor.classList.add('active');
   _positionPop(el, anchor);
 }
 
@@ -6447,7 +6749,7 @@ function _positionPop(pop, anchor) {
 window.addEventListener('resize', () => {
   if (!_openPop) return;
   const el = document.getElementById('pop-' + _openPop);
-  const anchor = document.getElementById('ic-' + _openPop);
+  const anchor = _openPopAnchor || document.getElementById('ic-' + _openPop);
   if (el && el.classList.contains('show')) _positionPop(el, anchor);
 });
 
@@ -6458,12 +6760,13 @@ function closePop() {
   const anchor = document.getElementById('ic-' + _openPop);
   if (anchor) anchor.classList.remove('active');
   _openPop = null;
+  _openPopAnchor = null;
   _atActiveQuery = '';
 }
 
 function togglePop(name, anchorEl) {
   if (_openPop === name) { closePop(); return; }
-  openPop(name);
+  openPop(name, anchorEl);
 }
 
 function pickMode(mode) {
@@ -6551,45 +6854,10 @@ function _refLabelsSet() {
   return s;
 }
 
-function _escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
 function renderMentionLayer() {
-  const layer = document.getElementById('mention-layer');
-  if (!layer || !promptInput) return;
-  const value = promptInput.value || '';
-  const labels = _refLabelsSet();
-  const re = _mentionTokenRegex();
-  let html = '';
-  let last = 0;
-  let m;
-  while ((m = re.exec(value)) !== null) {
-    const start = m.index;
-    const end   = re.lastIndex;
-    const label = m[1] + m[2];                       // 图1 / 视频1 / 标记1
-    const valid = labels.has(label);
-    html += _escapeHtml(value.slice(last, start));
-    const cls = 'mention-tok' + (m[1] === '标记' ? ' tok-marker' : '') + (valid ? '' : ' tok-missing');
-    html += `<span class="${cls}" data-label="${_escapeHtml(label)}">${_escapeHtml(m[0])}</span>`;
-    last = end;
-  }
-  html += _escapeHtml(value.slice(last));
-  // Preserve trailing newline so wrap aligns (textarea renders trailing \n as a row)
-  layer.innerHTML = html + '​';
-  // Sync scroll
-  layer.scrollTop = promptInput.scrollTop;
-  layer.scrollLeft = promptInput.scrollLeft;
-}
-
-// Keep overlay in sync on input/scroll/resize
-if (promptInput) {
-  promptInput.addEventListener('input', renderMentionLayer);
-  promptInput.addEventListener('scroll', () => {
-    const layer = document.getElementById('mention-layer');
-    if (layer) { layer.scrollTop = promptInput.scrollTop; layer.scrollLeft = promptInput.scrollLeft; }
-  });
-  window.addEventListener('resize', renderMentionLayer);
+  if (!promptInput || !promptEditor) return;
+  const caret = document.activeElement === promptEditor ? _getPromptCaretOffset() : undefined;
+  renderPromptEditorFromValue(promptInput.value || '', caret);
 }
 
 // ── Hover preview + canvas highlight ─────────────────────────────────
@@ -6640,29 +6908,20 @@ function _hideMentionTooltip() {
   if (tip) tip.style.display = 'none';
 }
 
-// Hit-test mention tokens via their rendered overlay rects.
-// The textarea sits on top (so the user can still select/edit), so we listen
-// on the textarea itself and look up which `.mention-tok` rect contains the
-// pointer. getClientRects() returns one rect per line a span wraps onto, so
-// multi-line tokens still work.
+// Hit-test inline reference chips in the contenteditable composer.
 function _tokenAtPoint(x, y) {
-  const layer = document.getElementById('mention-layer');
-  if (!layer) return null;
-  const toks = layer.querySelectorAll('.mention-tok');
-  for (let i = 0; i < toks.length; i++) {
-    const rects = toks[i].getClientRects();
-    for (let j = 0; j < rects.length; j++) {
-      const r = rects[j];
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-        return toks[i];
-      }
+  if (promptEditor) {
+    const chips = promptEditor.querySelectorAll('.prompt-ref-chip');
+    for (let i = 0; i < chips.length; i++) {
+      const r = chips[i].getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return chips[i];
     }
   }
   return null;
 }
 
 (function attachMentionHover(){
-  const ta = document.getElementById('prompt-input');
+  const ta = document.getElementById('prompt-editor') || document.getElementById('prompt-input');
   if (!ta) return;
   let curLabel = null;
 
@@ -8226,6 +8485,7 @@ function handleGenerate() {
   const now = Date.now();
   if (now - _lastSubmitAt < 450) return; // double-click guard
 
+  _syncPromptFromEditor();
   const prompt = promptInput.value.trim();
   const { providerId, model } = parseModelValue(
     document.getElementById('model-select').value

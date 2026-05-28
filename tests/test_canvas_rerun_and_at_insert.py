@@ -187,16 +187,17 @@ def test_insert_at_ref_does_not_blindly_replace_last_at():
     fn_end   = html.index("\nfunction ", fn_start + 1)
     fn = html[fn_start:fn_end]
 
-    # The old buggy line "before.slice(0, atIdx) + inserted + after" used the
-    # raw lastIndexOf('@') as the replacement start unconditionally. The fix
-    # must gate replacement on the absence of whitespace after that '@'.
-    assert "lastIndexOf('@')" in fn
-    assert "isLiveQuery" in fn
-    assert "/\\s/.test(before.slice(lastAt + 1))" in fn
-
-    # When NOT a live query, replacement start must be the cursor position
-    # rather than the (now stale) '@' index.
-    assert "replaceStart = isLiveQuery ? lastAt : pos" in fn
+    # insertAtRef now delegates to the contenteditable composer, but it must
+    # still preserve the old "only replace a live @ query" behavior there.
+    assert "_insertRefChipAtSelection(label)" in fn
+    assert "_syncPromptFromEditor()" in fn
+    helper_start = html.index("function _insertRefChipAtSelection(label)")
+    helper_end = html.index("\nfunction ", helper_start + 1)
+    helper = html[helper_start:helper_end]
+    assert "lastIndexOf('@')" in helper
+    assert "isLiveQuery" in helper
+    assert "/\\s/.test(before.slice(lastAt + 1))" in helper
+    assert "replaceStart = isLiveQuery ? lastAt : pos" in helper
 
     # The composer's mention overlay must be refreshed after insertion so
     # the freshly inserted @token immediately gets the styled chip.

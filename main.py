@@ -160,6 +160,7 @@ MODELSCOPE_DEFAULT_CHAT_MODEL = "Qwen/Qwen3-235B-A22B"
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "300"))
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "2"))
+APIMART_STATUS_POLL_INTERVAL = float(os.getenv("APIMART_STATUS_POLL_INTERVAL", "10"))
 VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
 
 APIMART_JOB_STATUS: Dict[str, Dict[str, Any]] = {}
@@ -1185,7 +1186,7 @@ async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None
     effective_timeout = timeout or AI_REQUEST_TIMEOUT
     started_at = time.monotonic()
     deadline = time.monotonic() + effective_timeout
-    delay = max(2.0, IMAGE_POLL_INTERVAL)
+    delay = max(1.0, APIMART_STATUS_POLL_INTERVAL)
     last_payload = {}
     _set_apimart_job_status(client_job_id, {
         "taskId": task_id,
@@ -1229,7 +1230,6 @@ async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None
                 info = dict(info)
                 info["task_info"] = task_info
             raise HTTPException(status_code=502, detail=info)
-        delay = min(delay * 1.4, 10)
     timeout_info = {
         "taskId": task_id,
         "status": "timeout",

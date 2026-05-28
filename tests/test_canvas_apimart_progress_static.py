@@ -13,6 +13,7 @@ def read(path):
 def test_request_timeout_default_is_300():
     main = read(MAIN)
     assert 'AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "300"))' in main
+    assert 'APIMART_STATUS_POLL_INTERVAL = float(os.getenv("APIMART_STATUS_POLL_INTERVAL", "10"))' in main
 
 
 def test_apimart_job_status_endpoint_and_updates_exist():
@@ -26,6 +27,8 @@ def test_apimart_job_status_endpoint_and_updates_exist():
     assert '"cost": task_data.get("cost")' in main
     assert '"pollCount": poll_count' in main
     assert '"elapsedSeconds": elapsed' in main
+    assert "delay = max(1.0, APIMART_STATUS_POLL_INTERVAL)" in main
+    assert "delay = min(delay * 1.4, 10)" not in main
     assert "timeout=AI_REQUEST_TIMEOUT, client_job_id=client_job_id" in main
     assert '"code": "apimart_task_timeout"' in main
     assert '"task_info": _get_apimart_job_status(client_job_id)' in main
