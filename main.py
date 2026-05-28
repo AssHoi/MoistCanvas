@@ -158,9 +158,12 @@ MODELSCOPE_CHAT_MODELS = [m.strip() for m in os.getenv("MODELSCOPE_CHAT_MODELS",
 MODELSCOPE_DEFAULT_IMAGE_MODEL = "Tongyi-MAI/Z-Image-Turbo"
 MODELSCOPE_DEFAULT_CHAT_MODEL = "Qwen/Qwen3-235B-A22B"
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
-AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
+AI_REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "300"))
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "2"))
 VIDEO_POLL_TIMEOUT = float(os.getenv("VIDEO_POLL_TIMEOUT", "1800"))
+
+APIMART_JOB_STATUS: Dict[str, Dict[str, Any]] = {}
+APIMART_JOB_LOCK = Lock()
 
 # ─── Centralized APIMart model catalog fallback ───────────────────────────────
 # This is the single source of truth for model params and pricing status.
@@ -1126,14 +1129,72 @@ def _should_fallback_official_ref_error(detail) -> bool:
     return _is_content_type_mismatch_text(text) or _is_transient_upstream_5xx_text(text)
 
 
-async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None):
+def _apimart_task_data(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    return data if isinstance(data, dict) else {}
+
+def _apimart_task_info(task_id: str, payload: dict, status_override: str = "", extra: Optional[dict] = None) -> dict:
+    task_data = _apimart_task_data(payload)
+    info = {
+        "taskId": task_id or task_data.get("task_id") or task_data.get("id") or "",
+        "status": status_override or task_data.get("status") or "",
+        "progress": task_data.get("progress"),
+        "estimatedTime": task_data.get("estimated_time"),
+        "actualTime": task_data.get("actual_time"),
+        "cost": task_data.get("cost"),
+        "message": task_data.get("message") or "",
+        "updatedAt": int(time.time() * 1000),
+    }
+    if isinstance(extra, dict):
+        info.update(extra)
+    return {k: v for k, v in info.items() if v is not None and v != ""}
+
+def _set_apimart_job_status(client_job_id: str, info: dict):
+    if not client_job_id:
+        return
+    with APIMART_JOB_LOCK:
+        current = APIMART_JOB_STATUS.get(client_job_id, {})
+        merged = dict(current)
+        merged.update(info or {})
+        merged["clientJobId"] = client_job_id
+        merged["updatedAt"] = int(time.time() * 1000)
+        APIMART_JOB_STATUS[client_job_id] = merged
+
+def _get_apimart_job_status(client_job_id: str) -> dict:
+    with APIMART_JOB_LOCK:
+        return dict(APIMART_JOB_STATUS.get(client_job_id) or {})
+
+@app.get("/api/apimart-job/{client_job_id}")
+async def apimart_job_status(client_job_id: str):
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", client_job_id or "")
+    if not cleaned or cleaned != client_job_id:
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    info = _get_apimart_job_status(cleaned)
+    if not info:
+        raise HTTPException(status_code=404, detail="APIMart job not found")
+    return info
+
+
+async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None, client_job_id=""):
     """Poll APIMart /v1/tasks/{task_id}?language=zh until completed or failed."""
     root = apimart_api_root(base_url)
     poll_url = f"{root}/v1/tasks/{task_id}?language=zh"
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    deadline = time.monotonic() + (timeout or AI_REQUEST_TIMEOUT)
+    effective_timeout = timeout or AI_REQUEST_TIMEOUT
+    started_at = time.monotonic()
+    deadline = time.monotonic() + effective_timeout
     delay = max(2.0, IMAGE_POLL_INTERVAL)
     last_payload = {}
+    _set_apimart_job_status(client_job_id, {
+        "taskId": task_id,
+        "status": "submitted",
+        "progress": 0,
+        "pollCount": 0,
+        "elapsedSeconds": 0,
+    })
+    poll_count = 0
     while time.monotonic() < deadline:
         await asyncio.sleep(delay)
         resp = await client.get(poll_url, headers=headers)
@@ -1142,14 +1203,46 @@ async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None
         last_payload = data
         task_data = data.get("data") if isinstance(data.get("data"), dict) else {}
         status = str(task_data.get("status") or "").lower()
+        poll_count += 1
+        elapsed = int(time.monotonic() - started_at)
+        _set_apimart_job_status(client_job_id, _apimart_task_info(task_id, data, extra={
+            "pollCount": poll_count,
+            "elapsedSeconds": elapsed,
+        }))
         if status in ("completed", "success"):
             return data
         if status in ("failed", "failure", "error", "cancelled"):
             error_obj = task_data.get("error") or task_data.get("message") or task_data
             info = classify_apimart_failure(error_obj, raw_response=data)
+            task_info = _apimart_task_info(task_id, data, status_override=status, extra={
+                "pollCount": poll_count,
+                "elapsedSeconds": elapsed,
+            })
+            _set_apimart_job_status(client_job_id, {
+                "taskId": task_id,
+                "status": status,
+                "error": info,
+                "pollCount": poll_count,
+                "elapsedSeconds": elapsed,
+            })
+            if isinstance(info, dict):
+                info = dict(info)
+                info["task_info"] = task_info
             raise HTTPException(status_code=502, detail=info)
         delay = min(delay * 1.4, 10)
-    raise HTTPException(status_code=504, detail=f"APIMart 任务超时：task_id={task_id}")
+    timeout_info = {
+        "taskId": task_id,
+        "status": "timeout",
+        "message": f"已等待 {int(effective_timeout)} 秒，APIMart 仍未返回完成状态",
+        "pollCount": poll_count,
+        "elapsedSeconds": int(time.monotonic() - started_at),
+    }
+    _set_apimart_job_status(client_job_id, timeout_info)
+    raise HTTPException(status_code=504, detail={
+        "message": f"APIMart 任务超时：已等待 {int(effective_timeout)} 秒，APIMart 仍未返回完成状态，task_id={task_id}",
+        "code": "apimart_task_timeout",
+        "task_info": _get_apimart_job_status(client_job_id) or timeout_info,
+    })
 
 def extract_apimart_image_results(data) -> list:
     """Extract all image URLs from APIMart task result, returns list of image_data dicts."""
@@ -1178,7 +1271,8 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
                                   resolution="", n=1, quality="", background="",
                                   moderation="", output_format="", output_compression=None,
                                   mask_url="",
-                                  allow_official_ref_fallback=True):
+                                  allow_official_ref_fallback=True,
+                                  client_job_id=""):
     """APIMart async image generation: submit → poll /v1/tasks/{task_id}."""
     root = apimart_api_root(provider.get("base_url") or "https://api.apimart.ai")
     api_key = os.getenv(provider_key_env(provider["id"]), "")
@@ -1193,6 +1287,7 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
             resolution=resolution,
             n=1,
             allow_official_ref_fallback=False,
+            client_job_id=client_job_id,
         )
         if isinstance(fallback_raw, dict):
             fallback_raw["_fallback_from_model"] = model
@@ -1220,7 +1315,7 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
             task_id = raw.get("task_id")
         if not task_id:
             return extract_apimart_image_results(raw), raw
-        result = await wait_for_apimart_task(client, root, api_key, task_id)
+        result = await wait_for_apimart_task(client, root, api_key, task_id, client_job_id=client_job_id)
         return extract_apimart_image_results(result), result
 
     async def retry_official_object_refs(client, root, headers, payload, image_urls):
@@ -1463,7 +1558,7 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
                 ),
             ) from fallback_exc
 
-async def apimart_canvas_video(payload, provider):
+async def apimart_canvas_video(payload, provider, client_job_id=""):
     """APIMart async video generation: upload refs → submit → poll → return local URLs."""
     root = apimart_api_root(provider.get("base_url") or "https://api.apimart.ai")
     api_key = os.getenv(provider_key_env(provider["id"]), "")
@@ -1510,7 +1605,7 @@ async def apimart_canvas_video(payload, provider):
             task_id = raw.get("task_id")
         if not task_id:
             raise HTTPException(status_code=502, detail=f"APIMart 视频提交未返回 task_id：{str(raw)[:300]}")
-        result = await wait_for_apimart_task(client, root, api_key, task_id, timeout=VIDEO_POLL_TIMEOUT)
+        result = await wait_for_apimart_task(client, root, api_key, task_id, timeout=AI_REQUEST_TIMEOUT, client_job_id=client_job_id)
         outer_data = result.get("data")
         result_data = (outer_data.get("result") or {}) if isinstance(outer_data, dict) else {}
         videos_raw = result_data.get("videos") or []
@@ -2191,7 +2286,7 @@ async def fx_rate_endpoint(base: str = "USD", target: str = "CNY"):
 # ─── Online Image ──────────────────────────────────────────────────────────────
 
 @app.post("/api/online-image")
-async def online_image(payload: OnlineImageRequest):
+async def online_image(payload: OnlineImageRequest, request: Request):
     provider = get_api_provider(payload.provider_id)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
@@ -2209,6 +2304,7 @@ async def online_image(payload: OnlineImageRequest):
                 output_format=payload.output_format,
                 output_compression=payload.output_compression,
                 mask_url=payload.mask_url,
+                client_job_id=request.headers.get("x-client-job-id", ""),
             )
             local_urls = [await save_ai_image_to_output(d, prefix="online_") for d in image_data_list]
         else:
@@ -2262,6 +2358,7 @@ async def online_image(payload: OnlineImageRequest):
         "params": {"provider_id": provider["id"], "model": result_model, "requested_model": model if result_model != model else "", "size": payload.size,
                    "resolution": payload.resolution, "quality": payload.quality, "reference_images": refs},
         "raw_usage": (raw.get("usage") or (raw.get("data") or {}).get("cost")) if isinstance(raw, dict) else None,
+        "task_info": _apimart_task_info((raw.get("data") or {}).get("task_id") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else "", raw) if provider.get("protocol") == "apimart" and isinstance(raw, dict) else {},
     }
     save_to_history(result)
     if GLOBAL_LOOP:
@@ -2323,10 +2420,10 @@ async def wait_for_video_task(client, provider, task_id):
     raise HTTPException(status_code=504, detail=f"视频生成任务超时：{last_payload or task_id}")
 
 @app.post("/api/canvas-video")
-async def canvas_video(payload: CanvasVideoRequest):
+async def canvas_video(payload: CanvasVideoRequest, request: Request):
     provider = get_api_provider(payload.provider_id)
     if provider.get("protocol") == "apimart":
-        local_urls, task_id, result = await apimart_canvas_video(payload, provider)
+        local_urls, task_id, result = await apimart_canvas_video(payload, provider, client_job_id=request.headers.get("x-client-job-id", ""))
         _vid_model = selected_model(payload.model, "")
         save_to_history({
             "prompt": payload.prompt,
@@ -2344,7 +2441,7 @@ async def canvas_video(payload: CanvasVideoRequest):
             },
             "raw_usage": (result.get("data") or {}).get("cost") if isinstance(result, dict) else None,
         })
-        return {"videos": local_urls, "task_id": task_id, "raw": result}
+        return {"videos": local_urls, "task_id": task_id, "raw": result, "task_info": _apimart_task_info(task_id, result) if isinstance(result, dict) else {}}
     base_url = video_api_root(provider)
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")

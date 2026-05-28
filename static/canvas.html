@@ -694,6 +694,27 @@
       width: 100%;
       line-height: 0;
     }
+    .img-node .img-origin-label {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      right: 6px;
+      max-width: calc(100% - 12px);
+      z-index: 5;
+      pointer-events: none;
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 500;
+      line-height: 1.35;
+      color: #fff;
+      background: rgba(17, 24, 39, 0.62);
+      border-radius: 5px;
+      padding: 3px 6px;
+      backdrop-filter: blur(6px);
+    }
     .img-node img {
       width: 100%;
       height: auto;
@@ -1756,6 +1777,11 @@
       color: var(--text-muted, var(--muted));
       padding: 2px 6px 0;
     }
+    .chat-task-info {
+      font-size: 11px;
+      color: var(--text-muted, var(--muted));
+      padding: 3px 6px 0;
+    }
     .chat-msg.user .chat-summary { text-align: right; }
     .chat-media-grid {
       display: flex;
@@ -1919,7 +1945,7 @@
       display: flex;
       flex-direction: column;
       gap: var(--space-sm);
-      padding: 14px 14px 10px;
+      padding: 16px clamp(16px, 4vw, 20px) 12px;
       background: var(--panel-bg);              /* cream — matches page */
       border: 1px solid var(--border);          /* #eceae4 warm hairline */
       border-radius: var(--radius-xl);          /* 16px — Lovable container */
@@ -1947,11 +1973,12 @@
     .composer-mid .mention-layer {
       position: absolute;
       inset: 0;
-      padding: 6px 4px;
-      font-size: 16px;
+      z-index: 0;
+      padding: 8px clamp(8px, 2.5vw, 12px);
+      font-size: 15px;
       line-height: 1.5;
       font-family: var(--font-sans);
-      color: transparent;
+      color: var(--text);
       white-space: pre-wrap;
       word-wrap: break-word;
       overflow: hidden;
@@ -1972,13 +1999,13 @@
       border: none;                             /* Lovable: no inner box, one container */
       border-radius: 0;
       min-height: 78px;
-      padding: 6px 4px;
-      font-size: 16px;                          /* body */
+      padding: 8px clamp(8px, 2.5vw, 12px);
+      font-size: 15px;                          /* body */
       line-height: 1.5;
       font-family: var(--font-sans);
       font-weight: 400;
       caret-color: var(--text);
-      color: var(--text);
+      color: transparent;
       z-index: 1;
     }
     .composer-mid textarea#prompt-input:focus { outline: none; }
@@ -2180,7 +2207,11 @@
       overflow: hidden;
     }
     .pop-mention-item .pmi-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .pop-mention-item .pmi-tag { font-weight: 600; }
+    .pop-mention-item .pmi-tag {
+      color: #dc2626;
+      font-size: 12px;
+      font-weight: 600;
+    }
     .pop-mention-item .pmi-name {
       color: var(--muted);
       font-size: 11px;
@@ -2906,22 +2937,30 @@
       white-space: pre-wrap;
       vertical-align: baseline;
       pointer-events: none;
-      background: var(--surface-strong);
-      box-shadow: 0 0 0 1px var(--border-strong) inset;
-      color: transparent;
+      background: rgba(220, 38, 38, 0.08);
+      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.26) inset;
+      color: #dc2626;
       border-radius: var(--radius-xs);
     }
     .composer-mid .mention-layer .mention-tok.tok-marker {
-      background: rgba(28, 28, 28, 0.10);
-      box-shadow: 0 0 0 1px var(--text) inset;
+      background: rgba(220, 38, 38, 0.10);
+      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.34) inset;
     }
     .composer-mid .mention-layer .mention-tok.tok-missing {
-      background: var(--surface-strong);
-      box-shadow: 0 0 0 1px var(--border-strong) inset;
+      background: rgba(220, 38, 38, 0.06);
+      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.18) inset;
       opacity: .5;
     }
-    body.theme-dark .composer-mid .mention-layer .mention-tok        { background: var(--surface-strong); }
-    body.theme-dark .composer-mid .mention-layer .mention-tok.tok-marker { background: var(--surface-strong); box-shadow: 0 0 0 1px var(--text) inset; }
+    body.theme-dark .composer-mid .mention-layer .mention-tok {
+      background: rgba(248, 113, 113, 0.14);
+      box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.34) inset;
+      color: #f87171;
+    }
+    body.theme-dark .composer-mid .mention-layer .mention-tok.tok-marker {
+      background: rgba(248, 113, 113, 0.18);
+      box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.42) inset;
+    }
+    body.theme-dark .pop-mention-item .pmi-tag { color: #f87171; }
     #mention-tooltip {
       position: fixed;
       display: none;
@@ -3263,6 +3302,7 @@ let activeCanvasId = '';
 let activeCanvasTitle = 'Moist Canvas';
 let canvasListV2 = [];
 let _nodeIdSeq   = 0;
+let _lastCanvasPointer = null; // latest viewport-relative pointer position for paste placement
 // _markerSeq is retained as a no-op variable so legacy save/restore code that
 // still writes to it doesn't throw. Marker numbering is now driven by
 // `nextMarkerNumber()` below, which scans live markers and returns the
@@ -3461,6 +3501,7 @@ function cloneCanvasNodeForClipboard(node) {
       kind:    'image',
       url:     node.url || '',
       name:    node.name || '',
+      originLabel: node.originLabel || '',
       x:       typeof node.x === 'number' ? node.x : 0,
       y:       typeof node.y === 'number' ? node.y : 0,
       width:   node.width  || 0,
@@ -3542,6 +3583,7 @@ function pasteCopiedNodes() {
         sizeOpt,
         restoreMarkers.length ? restoreMarkers : null,
         item.mask ? Object.assign({}, item.mask) : null,
+        { originLabel: item.originLabel || '' },
       );
       if (id) newIds.push(id);
     } else if (item.kind === 'video') {
@@ -3619,9 +3661,6 @@ document.addEventListener('keydown', (e) => {
   if (k === 'c') {
     e.preventDefault();
     copySelectedNodes();
-  } else if (k === 'v') {
-    e.preventDefault();
-    pasteCopiedNodes();
   } else if (k === 'z' && !e.shiftKey) {
     e.preventDefault();
     undoCanvas();
@@ -3630,6 +3669,100 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
   if (e.code === 'Space') { spaceDown = false; viewport.style.cursor = ''; }
 });
+
+viewport.addEventListener('pointermove', (e) => {
+  const rect = viewport.getBoundingClientRect();
+  _lastCanvasPointer = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
+});
+viewport.addEventListener('pointerleave', () => {
+  _lastCanvasPointer = null;
+});
+
+function isSupportedExternalImageFile(file) {
+  if (!file) return false;
+  const type = String(file.type || '').toLowerCase();
+  if (/^image\/(png|jpe?g|webp)$/.test(type)) return true;
+  const name = String(file.name || '').toLowerCase();
+  return /\.(png|jpe?g|webp)$/.test(name);
+}
+
+function nameClipboardImageFile(file, index) {
+  if (!file) return file;
+  const hasName = file.name && file.name !== 'image.png';
+  if (hasName) return file;
+  const type = String(file.type || '').toLowerCase();
+  const ext = type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png';
+  return new File([file], 'pasted-image-' + Date.now() + '-' + (index + 1) + '.' + ext, {
+    type: file.type || ('image/' + ext),
+    lastModified: Date.now(),
+  });
+}
+
+function extractClipboardImageFiles(clipboardData) {
+  if (!clipboardData) return [];
+  const files = [];
+  const seen = new Set();
+
+  Array.from(clipboardData.items || []).forEach((item, index) => {
+    if (!item || item.kind !== 'file') return;
+    if (!/^image\//i.test(item.type || '')) return;
+    const file = item.getAsFile && item.getAsFile();
+    if (!isSupportedExternalImageFile(file)) return;
+    const key = [file.name, file.type, file.size, index].join(':');
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push(nameClipboardImageFile(file, files.length));
+  });
+
+  Array.from(clipboardData.files || []).forEach((file, index) => {
+    if (!isSupportedExternalImageFile(file)) return;
+    const key = [file.name, file.type, file.size, index].join(':');
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push(nameClipboardImageFile(file, files.length));
+  });
+
+  return files;
+}
+
+function canvasPastePoint() {
+  const rect = viewport.getBoundingClientRect();
+  let px = rect.width / 2;
+  let py = rect.height / 2;
+  if (_lastCanvasPointer &&
+      _lastCanvasPointer.x >= 0 && _lastCanvasPointer.x <= rect.width &&
+      _lastCanvasPointer.y >= 0 && _lastCanvasPointer.y <= rect.height) {
+    px = _lastCanvasPointer.x;
+    py = _lastCanvasPointer.y;
+  }
+  return {
+    wx: (px - tx) / scale,
+    wy: (py - ty) / scale,
+  };
+}
+
+function initCanvasPaste() {
+  document.addEventListener('paste', async (e) => {
+    if (isTextInputTarget(e.target)) return;
+    const images = extractClipboardImageFiles(e.clipboardData);
+    if (images.length > 0) {
+      e.preventDefault();
+      const point = canvasPastePoint();
+      await uploadImagesAtPoint(images, point.wx, point.wy);
+      return;
+    }
+    if (_internalClipboard && _internalClipboard.items && _internalClipboard.items.length) {
+      e.preventDefault();
+      pasteCopiedNodes();
+      return;
+    }
+    showToast('剪贴板里没有可粘贴的图片或画布素材');
+  });
+}
+initCanvasPaste();
 
 viewport.addEventListener('mousedown', (e) => {
   // Only react to left or middle button on empty area (viewport / world / canvas-area)
@@ -4681,8 +4814,9 @@ function updateInsertChatBar() {
 // ═══════════════════════════════════════════════
 // IMAGE NODES
 // ═══════════════════════════════════════════════
-function createImageNode(url, name, x, y, restoreId, restoreSize, restoreMarkers, restoreMask) {
+function createImageNode(url, name, x, y, restoreId, restoreSize, restoreMarkers, restoreMask, options) {
   const id = restoreId || genNodeId();
+  const originLabel = (options && options.originLabel) ? String(options.originLabel) : '';
 
   const el = document.createElement('div');
   el.className = 'c-node img-node';
@@ -4730,8 +4864,17 @@ function createImageNode(url, name, x, y, restoreId, restoreSize, restoreMarkers
   const pinLayer = document.createElement('div');
   pinLayer.className = 'pin-layer';
 
+  let originEl = null;
+  if (originLabel) {
+    originEl = document.createElement('div');
+    originEl.className = 'img-origin-label';
+    originEl.textContent = originLabel;
+    originEl.title = originLabel;
+  }
+
   imgWrap.appendChild(spinner);
   imgWrap.appendChild(img);
+  if (originEl) imgWrap.appendChild(originEl);
   imgWrap.appendChild(pinLayer);
 
   // Per-node deferred marker-placement timer. A single click in marking mode is
@@ -4798,6 +4941,7 @@ function createImageNode(url, name, x, y, restoreId, restoreSize, restoreMarkers
 
   const entry = {
     id, type: 'image', url, name, x, y,
+    originLabel,
     width:  initW,
     height: (restoreSize && restoreSize.height) ? restoreSize.height : 0,
     naturalWidth: 0, naturalHeight: 0,
@@ -5745,14 +5889,13 @@ async function uploadImages(files) {
     setStatus('', false);
 
     // Place images in a row at viewport center
-    const cx = (viewport.clientWidth  / 2 - tx) / scale;
-    const cy = (viewport.clientHeight / 2 - ty) / scale;
-    const GAP = 190;
+    const GAP = 20;
     const uploaded = data.files || [];
     if (uploaded.length > 0) pushUndoSnapshot('插入图片');
-    const startX = cx - ((uploaded.length - 1) * GAP) / 2 - 90;
+    const positions = placeMediaGroupNearViewport(uploaded.length, 260, 400, GAP, canvasCenter());
     uploaded.forEach((f, i) => {
-      createImageNode(f.url, f.name, startX + i * GAP, cy - 80);
+      const p = positions[i] || positions[0] || { x: 0, y: 0 };
+      createImageNode(f.url, f.name, p.x, p.y, null, null, null, null, { originLabel: '外部导入：' + (f.name || 'image') });
     });
 
     showToast('已插入 ' + uploaded.length + ' 张图片');
@@ -6207,13 +6350,24 @@ function insertAtRef(label) {
   const val    = promptInput.value;
   const before = val.slice(0, pos);
   const after  = val.slice(pos);
-  const atIdx  = before.lastIndexOf('@');
-  const inserted = '@' + label + ' ';
-  promptInput.value = before.slice(0, atIdx) + inserted + after;
-  const newPos = atIdx + inserted.length;
+  const lastAt = before.lastIndexOf('@');
+  // Treat the run after the most-recent '@' (within `before`) as a live
+  // mention-query ONLY if it contains no whitespace. Otherwise that '@' is
+  // already part of a completed token like "@图1 " and must NOT be clobbered
+  // when the user picks another ref from the popover or the "引用" button.
+  const isLiveQuery = lastAt >= 0 && !/\s/.test(before.slice(lastAt + 1));
+  const replaceStart = isLiveQuery ? lastAt : pos;
+  const leftSegment  = val.slice(0, replaceStart);
+  // Plain-insert mode: if the char immediately before our insertion point is
+  // not whitespace, prepend a space so we never produce "文字@图2".
+  const needsLeadSpace = !isLiveQuery && leftSegment.length > 0 && !/\s/.test(leftSegment.slice(-1));
+  const inserted = (needsLeadSpace ? ' ' : '') + '@' + label + ' ';
+  promptInput.value = leftSegment + inserted + after;
+  const newPos = replaceStart + inserted.length;
   promptInput.selectionStart = promptInput.selectionEnd = newPos;
   hideAtMenu();
   updateCharCount();
+  try { renderMentionLayer(); } catch (e) {}
   promptInput.focus();
 }
 
@@ -6656,12 +6810,14 @@ function _parseErrorResponse(data, fallback) {
       message:   d.message || JSON.stringify(d),
       requestId: d.request_id || d.requestId || null,
       code:      d.code || '',
+      taskInfo:  d.task_info || d.taskInfo || null,
     };
   }
   return {
     message:   (typeof d === 'string' && d) ? d : (fallback || '请求失败'),
     requestId: null,
     code:      '',
+    taskInfo:  data && (data.task_info || data.taskInfo) || null,
   };
 }
 
@@ -6808,6 +6964,51 @@ function _buildChatLogIcon(m) {
   return btn;
 }
 
+// "再次生成" icon — circular arrow. Same hover-reveal behaviour as the
+// copy / log icons (reuses the .chat-log-icon class so we don't duplicate
+// styles). Disabled when the user message has no captured requestLog, or
+// while a rerun for this message is already in flight.
+const _RERUN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/>' +
+    '<polyline points="21 3 21 8 16 8"/>' +
+    '<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/>' +
+    '<polyline points="3 21 3 16 8 16"/>' +
+  '</svg>';
+
+function _buildChatRerunIcon(m) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'chat-log-icon chat-rerun-icon';
+  btn.innerHTML = _RERUN_SVG;
+  const hasLog   = !!(m && m.requestLog);
+  const rerunKey = _rerunKeyForMessage(m);
+  const inFlight = !!(rerunKey && _rerunInFlight.has(rerunKey));
+  if (!hasLog) {
+    btn.title = '请求日志尚未生成，无法再次生成';
+    btn.setAttribute('aria-label', '请求日志尚未生成');
+    btn.disabled = true;
+    btn.classList.add('is-disabled');
+  } else if (inFlight) {
+    btn.title = '正在再次生成…';
+    btn.setAttribute('aria-label', '正在再次生成');
+    btn.disabled = true;
+    btn.classList.add('is-disabled');
+  } else {
+    btn.title = '再次生成（使用原始请求）';
+    btn.setAttribute('aria-label', '再次生成');
+  }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add('is-disabled');
+    rerunConversationRequest(m);
+  });
+  return btn;
+}
+
 // Lightweight modal showing the captured request log as pretty JSON. Esc and
 // outside-click both close it. A small 复制 JSON button copies the entire
 // formatted JSON to the clipboard.
@@ -6896,6 +7097,65 @@ function _buildRefThumb(r) {
   return t;
 }
 
+function _taskStatusText(taskInfo, isDone) {
+  if (!taskInfo || typeof taskInfo !== 'object') return '';
+  const rawStatus = String(taskInfo.status || '').toLowerCase();
+  const map = {
+    submitted: '已提交',
+    pending: '排队中',
+    queued: '排队中',
+    processing: '生成中',
+    running: '生成中',
+    completed: '已完成',
+    success: '已完成',
+    failed: '任务失败',
+    failure: '任务失败',
+    error: '任务失败',
+    cancelled: '已取消',
+    canceled: '已取消',
+    timeout: '任务超时',
+  };
+  const parts = [];
+  parts.push(taskInfo.message || map[rawStatus] || (isDone ? '已完成' : '生成中'));
+  if (!isDone && taskInfo.progress !== undefined && taskInfo.progress !== null && taskInfo.progress !== '') {
+    parts.push(String(taskInfo.progress) + '%');
+  }
+  if (!isDone && taskInfo.estimatedTime !== undefined && taskInfo.estimatedTime !== null && taskInfo.estimatedTime !== '') {
+    parts.push('预计 ' + taskInfo.estimatedTime + ' 秒');
+  }
+  if (!isDone && taskInfo.elapsedSeconds !== undefined && taskInfo.elapsedSeconds !== null && taskInfo.elapsedSeconds !== '') {
+    parts.push('已等待 ' + taskInfo.elapsedSeconds + ' 秒');
+  }
+  if (!isDone && taskInfo.pollCount !== undefined && taskInfo.pollCount !== null && taskInfo.pollCount !== '') {
+    parts.push('第' + taskInfo.pollCount + '次查询');
+  }
+  return parts.join('，');
+}
+
+function _taskDoneText(taskInfo) {
+  if (!taskInfo || typeof taskInfo !== 'object') return '';
+  const parts = [];
+  if (taskInfo.actualTime !== undefined && taskInfo.actualTime !== null && taskInfo.actualTime !== '') {
+    parts.push('耗时 ' + taskInfo.actualTime + ' 秒');
+  }
+  if (taskInfo.cost !== undefined && taskInfo.cost !== null && taskInfo.cost !== '') {
+    parts.push('费用 ' + taskInfo.cost);
+  }
+  if (!parts.length && taskInfo.estimatedTime !== undefined && taskInfo.estimatedTime !== null && taskInfo.estimatedTime !== '') {
+    parts.push('预计 ' + taskInfo.estimatedTime + ' 秒');
+  }
+  return parts.join(' · ');
+}
+
+function _appendTaskInfoLine(wrap, taskInfo, done) {
+  const text = done ? _taskDoneText(taskInfo) : _taskStatusText(taskInfo, false);
+  if (!text) return;
+  const info = document.createElement('div');
+  info.className = 'chat-task-info';
+  info.textContent = text;
+  wrap.appendChild(info);
+}
+
 function buildConversationItem(m) {
   const wrap = document.createElement('div');
   wrap.className = 'chat-msg ' + (m.role === 'user' ? 'user' : 'assistant');
@@ -6937,6 +7197,7 @@ function buildConversationItem(m) {
     actions.className = 'chat-actions chat-actions-hover';
     if (m.prompt) actions.appendChild(_buildChatCopyIcon(m.prompt));
     actions.appendChild(_buildChatLogIcon(m));
+    actions.appendChild(_buildChatRerunIcon(m));
     wrap.appendChild(actions);
     return wrap;
   }
@@ -6963,6 +7224,7 @@ function buildConversationItem(m) {
       s.textContent = summary;
       wrap.appendChild(s);
     }
+    _appendTaskInfoLine(wrap, m.taskInfo, false);
     return wrap;
   }
 
@@ -7003,6 +7265,7 @@ function buildConversationItem(m) {
       grid.appendChild(box);
     });
     wrap.appendChild(grid);
+    _appendTaskInfoLine(wrap, m.taskInfo, true);
   } else if (m.error) {
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble chat-bubble-error';
@@ -7250,7 +7513,17 @@ async function uploadImagesAtPoint(files, wx, wy) {
     const startX = wx - ((uploaded.length - 1) * GAP) / 2 - 90;
     const newIds = [];
     uploaded.forEach((f, i) => {
-      const id = createImageNode(f.url, f.name, startX + i * GAP, wy - 90);
+      const id = createImageNode(
+        f.url,
+        f.name,
+        startX + i * GAP,
+        wy - 90,
+        null,
+        null,
+        null,
+        null,
+        { originLabel: '外部导入：' + (f.name || 'image') },
+      );
       if (id) newIds.push(id);
     });
     selectedIds.clear();
@@ -7611,6 +7884,91 @@ function canvasCenter() {
   };
 }
 
+function mediaRectsOverlap(a, b, padding) {
+  const p = typeof padding === 'number' ? padding : 24;
+  return !(
+    a.x + a.width + p <= b.x ||
+    b.x + b.width + p <= a.x ||
+    a.y + a.height + p <= b.y ||
+    b.y + b.height + p <= a.y
+  );
+}
+
+function mediaRectForNode(n) {
+  if (!n) return null;
+  const isVideo = n.type === 'video';
+  const width = n.width || (n.el && n.el.offsetWidth) || (isVideo ? 240 : 180);
+  const height = n.height || (n.el && n.el.offsetHeight) || (isVideo ? 175 : 220);
+  return {
+    x: typeof n.x === 'number' ? n.x : 0,
+    y: typeof n.y === 'number' ? n.y : 0,
+    width,
+    height,
+  };
+}
+
+function existingMediaRects() {
+  const rects = [];
+  imageNodes.forEach(n => {
+    if (n.id === 'welcome') return;
+    const r = mediaRectForNode(n);
+    if (r) rects.push(r);
+  });
+  videoNodes.forEach(n => {
+    const r = mediaRectForNode(n);
+    if (r) rects.push(r);
+  });
+  return rects;
+}
+
+function findNearbyFreePlacement(width, height, preferredPoint, count, gap) {
+  const point = preferredPoint || canvasCenter();
+  const base = {
+    x: Math.round((point.cx || 0) - width / 2),
+    y: Math.round((point.cy || 0) - height / 2),
+    width,
+    height,
+  };
+  const occupied = existingMediaRects();
+  const isFree = (rect) => !occupied.some(other => mediaRectsOverlap(rect, other, gap || 24));
+  if (isFree(base)) return { x: base.x, y: base.y };
+
+  const step = 180;
+  const maxRadius = 1080;
+  for (let radius = step; radius <= maxRadius; radius += step) {
+    const candidates = [
+      { x: base.x + radius, y: base.y },
+      { x: base.x,          y: base.y + radius },
+      { x: base.x - radius, y: base.y },
+      { x: base.x,          y: base.y - radius },
+      { x: base.x + radius, y: base.y + radius },
+      { x: base.x - radius, y: base.y + radius },
+      { x: base.x + radius, y: base.y - radius },
+      { x: base.x - radius, y: base.y - radius },
+    ];
+    for (const c of candidates) {
+      const rect = { x: c.x, y: c.y, width, height };
+      if (isFree(rect)) return c;
+    }
+  }
+  const n = Math.max(1, parseInt(count, 10) || 1);
+  return { x: base.x + n * 32, y: base.y + n * 32 };
+}
+
+function placeMediaGroupNearViewport(count, itemWidth, itemHeight, gap, preferredPoint) {
+  const n = Math.max(1, parseInt(count, 10) || 1);
+  const w = itemWidth || 180;
+  const h = itemHeight || 220;
+  const g = typeof gap === 'number' ? gap : 24;
+  const groupWidth = (n * w) + ((n - 1) * g);
+  const start = findNearbyFreePlacement(groupWidth, h, preferredPoint || canvasCenter(), n, g);
+  const positions = [];
+  for (let i = 0; i < n; i++) {
+    positions.push({ x: start.x + i * (w + g), y: start.y });
+  }
+  return positions;
+}
+
 // ─── Build a marker-annotated reference image as a PNG Blob ───
 function buildMarkerReferenceBlob(originalUrl, markers) {
   return new Promise((resolve, reject) => {
@@ -7958,18 +8316,67 @@ function handleGenerate() {
   });
 }
 
+function _newClientJobId() {
+  return 'job_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+function _normalizeTaskInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  return {
+    clientJobId: info.clientJobId || '',
+    taskId: info.taskId || info.task_id || '',
+    status: info.status || '',
+    progress: info.progress,
+    estimatedTime: info.estimatedTime !== undefined ? info.estimatedTime : info.estimated_time,
+    actualTime: info.actualTime !== undefined ? info.actualTime : info.actual_time,
+    cost: info.cost,
+    message: info.message || '',
+    pollCount: info.pollCount !== undefined ? info.pollCount : info.poll_count,
+    elapsedSeconds: info.elapsedSeconds !== undefined ? info.elapsedSeconds : info.elapsed_seconds,
+    updatedAt: info.updatedAt || Date.now(),
+  };
+}
+
+function _startApimartJobPolling(asstMsgId, clientJobId) {
+  if (!asstMsgId || !clientJobId) return () => {};
+  let stopped = false;
+  let timer = null;
+  const poll = async () => {
+    if (stopped) return;
+    try {
+      const res = await fetch('/api/apimart-job/' + encodeURIComponent(clientJobId));
+      if (res.ok) {
+        const data = await res.json();
+        const info = _normalizeTaskInfo(data);
+        if (info) updateConversationMessage(asstMsgId, { taskInfo: info });
+      }
+    } catch (e) {}
+    if (!stopped) timer = setTimeout(poll, 10000);
+  };
+  timer = setTimeout(poll, 1200);
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 async function _runGenerationTask(task) {
   const { asstMsgId, userMsgId, prompt, providerId, model, paramVals, refsSnapshot, mode } = task;
+  const clientJobId = _newClientJobId();
+  const stopTaskPolling = _startApimartJobPolling(asstMsgId, clientJobId);
 
   function _fail(err) {
     const errMsg = err && err.message || '未知错误';
     const reqId  = err && err.requestId || '';
-    updateConversationMessage(asstMsgId, {
+    const taskInfo = err && err.taskInfo ? _normalizeTaskInfo(err.taskInfo) : null;
+    const updates = {
       status: 'error',
       media: [],
       error: errMsg,
       errorRequestId: reqId,
-    });
+    };
+    if (taskInfo) updates.taskInfo = taskInfo;
+    updateConversationMessage(asstMsgId, updates);
     showToast('生成失败');
     scheduleSave();
   }
@@ -8015,28 +8422,28 @@ async function _runGenerationTask(task) {
         });
       }
       const res = await fetch('/api/canvas-video', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Job-Id': clientJobId },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const info = _parseErrorResponse(data, 'HTTP ' + res.status);
-        const e = new Error(info.message); e.requestId = info.requestId; throw e;
+        const e = new Error(info.message); e.requestId = info.requestId; e.taskInfo = info.taskInfo || data.task_info || null; throw e;
       }
       const videos = data.videos || [];
       if (videos.length === 0) throw new Error('接口未返回视频');
 
-      const { cx, cy } = canvasCenter();
-      const GAP = 260;
-      const startX = cx - ((videos.length - 1) * GAP) / 2 - 120;
+      const GAP = 20;
+      const positions = placeMediaGroupNearViewport(videos.length, 240, 175, GAP, canvasCenter());
       const _media = [];
       videos.forEach((url, i) => {
         const name = '生成视频_' + (i + 1);
-        const nid = createVideoNode(url, name, startX + i * GAP, cy - 80);
+        const p = positions[i] || positions[0] || { x: 0, y: 0 };
+        const nid = createVideoNode(url, name, p.x, p.y);
         _media.push({ type: 'video', url, name, nodeId: nid });
       });
       updateConversationMessage(asstMsgId, {
-        status: 'done', media: _media, error: '', errorRequestId: '',
+        status: 'done', media: _media, error: '', errorRequestId: '', taskInfo: _normalizeTaskInfo(data.task_info),
       });
       showToast('已生成视频并插入画布');
       if (_historyLoaded) loadAssets();
@@ -8141,35 +8548,197 @@ async function _runGenerationTask(task) {
       });
     }
     const res = await fetch('/api/online-image', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Job-Id': clientJobId },
       body: JSON.stringify(imgPayload),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const info = _parseErrorResponse(data, 'HTTP ' + res.status);
-      const e = new Error(info.message); e.requestId = info.requestId; throw e;
+      const e = new Error(info.message); e.requestId = info.requestId; e.taskInfo = info.taskInfo || data.task_info || null; throw e;
     }
     const okImages = data.images || [];
     if (okImages.length === 0) throw new Error('接口未返回图片');
 
-    const { cx, cy } = canvasCenter();
-    const GAP = 190;
-    const startX = cx - ((okImages.length - 1) * GAP) / 2 - 90;
+    const imageOriginLabel = prompt || '';
+    const GAP = 20;
+    const positions = placeMediaGroupNearViewport(okImages.length, 260, 400, GAP, canvasCenter());
     const _media = [];
     okImages.forEach((url, i) => {
       const name = 'generated_' + Date.now() + '_' + i + '.png';
-      const nid = createImageNode(url, name, startX + i * GAP, cy - 80);
+      const p = positions[i] || positions[0] || { x: 0, y: 0 };
+      const nid = createImageNode(url, name, p.x, p.y, null, null, null, null, { originLabel: imageOriginLabel });
       _media.push({ type: 'image', url, name, nodeId: nid });
     });
     updateConversationMessage(asstMsgId, {
-      status: 'done', media: _media, error: '', errorRequestId: '',
+      status: 'done', media: _media, error: '', errorRequestId: '', taskInfo: _normalizeTaskInfo(data.task_info),
     });
     showToast('已生成 ' + okImages.length + ' 张并插入画布');
     if (_historyLoaded) loadAssets();
     scheduleSave();
   } catch (err) {
     _fail(err);
+  } finally {
+    stopTaskPolling();
   }
+}
+
+// ─── "再次生成" support ─────────────────────────────────────────────────
+// Replays a previously captured requestLog VERBATIM. We deliberately do
+// NOT rebuild the payload from the current UI (prompt input, model select,
+// refs, mask state) — the whole point is "send the exact same JSON again".
+//
+// To keep the conversation flow honest, the replay appends a FRESH user
+// message that mirrors the original turn (prompt/model/params/refUrls/mode,
+// plus the same requestLog so its own (!) and 再次生成 buttons still work),
+// THEN appends the pending assistant bubble underneath. To the eye it looks
+// exactly like the user re-sent the same prompt.
+const _rerunInFlight = new Set();
+const _RERUN_ALLOWED_ENDPOINTS = new Set(['/api/online-image', '/api/canvas-video']);
+
+function _rerunKeyForMessage(m) {
+  const log = m && m.requestLog;
+  if (!log) return '';
+  let bodyKey = '';
+  try {
+    bodyKey = JSON.stringify(log.body || {});
+  } catch (e) {
+    bodyKey = String(log.body || '');
+  }
+  return [
+    log.endpoint || '',
+    log.capturedAt || '',
+    bodyKey,
+  ].join('\n');
+}
+
+function rerunConversationRequest(userMsg) {
+  if (!userMsg || !userMsg.requestLog) {
+    showToast('请求日志尚未生成');
+    return;
+  }
+  const uid = userMsg.id;
+  const rerunKey = _rerunKeyForMessage(userMsg);
+  if (rerunKey && _rerunInFlight.has(rerunKey)) return; // already running
+  if (rerunKey) _rerunInFlight.add(rerunKey);
+
+  const log      = userMsg.requestLog;
+  const endpoint = log.endpoint || '';
+  const method   = (log.method || 'POST').toUpperCase();
+  const body     = log.body || {};
+  // Endpoint is the source of truth for image-vs-video placement; mode is
+  // stored for display but we don't re-derive payload from it.
+  const isVideo  = /canvas-video/.test(endpoint) || log.mode === 'vid-gen';
+
+  // Endpoint allowlist — replaying an arbitrary captured URL would be a
+  // foot-gun if the requestLog ever got tampered with by a stored canvas
+  // payload. Only the two generation endpoints are valid replay targets.
+  if (!_RERUN_ALLOWED_ENDPOINTS.has(endpoint)) {
+    if (rerunKey) _rerunInFlight.delete(rerunKey);
+    showToast('不支持再次生成该请求（endpoint 非法）');
+    try { if (uid) updateConversationMessage(uid, {}); } catch (e) {}
+    return;
+  }
+
+  // 1) Fresh user bubble — looks like the user just typed the same prompt
+  //    again. We carry over requestLog so this new bubble's own (!) and
+  //    "再次生成" buttons are functional too.
+  const newUserMsg = appendConversationMessage({
+    role: 'user',
+    prompt:  userMsg.prompt  || '',
+    model:   userMsg.model   || '',
+    params:  userMsg.params  || {},
+    refUrls: Array.isArray(userMsg.refUrls) ? userMsg.refUrls.map(r => Object.assign({}, r)) : [],
+    mode:    userMsg.mode    || (isVideo ? 'vid-gen' : ''),
+    requestLog: userMsg.requestLog,
+  });
+
+  // 2) Pending assistant bubble — uses the same prompt/model/params/mode
+  //    purely for the spinner-row summary line.
+  const asstMsg = appendConversationMessage({
+    role: 'assistant',
+    status: 'pending',
+    prompt: newUserMsg.prompt,
+    model:  newUserMsg.model,
+    params: newUserMsg.params,
+    media: [],
+    mode:   newUserMsg.mode,
+  });
+  scheduleSave();
+  const clientJobId = _newClientJobId();
+  const stopTaskPolling = _startApimartJobPolling(asstMsg.id, clientJobId);
+
+  (async () => {
+    try {
+      const res = await fetch(endpoint, {
+        method,
+        headers: { 'Content-Type': 'application/json', 'X-Client-Job-Id': clientJobId },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const info = _parseErrorResponse(data, 'HTTP ' + res.status);
+        const e = new Error(info.message); e.requestId = info.requestId; e.taskInfo = info.taskInfo || data.task_info || null; throw e;
+      }
+
+      if (isVideo) {
+        const videos = data.videos || [];
+        if (videos.length === 0) throw new Error('接口未返回视频');
+        const GAP = 20;
+        const positions = placeMediaGroupNearViewport(videos.length, 240, 175, GAP, canvasCenter());
+        const _media = [];
+        videos.forEach((url, i) => {
+          const name = '生成视频_' + (i + 1);
+          const p = positions[i] || positions[0] || { x: 0, y: 0 };
+          const nid = createVideoNode(url, name, p.x, p.y);
+          _media.push({ type: 'video', url, name, nodeId: nid });
+        });
+        updateConversationMessage(asstMsg.id, {
+          status: 'done', media: _media, error: '', errorRequestId: '', taskInfo: _normalizeTaskInfo(data.task_info),
+        });
+        showToast('已再次生成视频并插入画布');
+      } else {
+        const okImages = data.images || [];
+        if (okImages.length === 0) throw new Error('接口未返回图片');
+        const imageOriginLabel = userMsg.prompt || body.prompt || '';
+        const GAP = 20;
+        const positions = placeMediaGroupNearViewport(okImages.length, 260, 400, GAP, canvasCenter());
+        const _media = [];
+        okImages.forEach((url, i) => {
+          const name = 'regenerated_' + Date.now() + '_' + i + '.png';
+          const p = positions[i] || positions[0] || { x: 0, y: 0 };
+          const nid = createImageNode(url, name, p.x, p.y, null, null, null, null, { originLabel: imageOriginLabel });
+          _media.push({ type: 'image', url, name, nodeId: nid });
+        });
+        updateConversationMessage(asstMsg.id, {
+          status: 'done', media: _media, error: '', errorRequestId: '', taskInfo: _normalizeTaskInfo(data.task_info),
+        });
+        showToast('已再次生成 ' + okImages.length + ' 张并插入画布');
+      }
+
+      if (_historyLoaded) loadAssets();
+      scheduleSave();
+    } catch (err) {
+      const errMsg = (err && err.message) || '未知错误';
+      const reqId  = (err && err.requestId) || '';
+      const updates = {
+        status: 'error',
+        media: [],
+        error: errMsg,
+        errorRequestId: reqId,
+      };
+      if (err && err.taskInfo) updates.taskInfo = _normalizeTaskInfo(err.taskInfo);
+      updateConversationMessage(asstMsg.id, updates);
+      showToast('再次生成失败');
+      scheduleSave();
+    } finally {
+      stopTaskPolling();
+      if (rerunKey) _rerunInFlight.delete(rerunKey);
+      // Re-render BOTH user bubbles so every rerun button tied to this
+      // requestLog reflects the shared in-flight state.
+      try { if (uid) updateConversationMessage(uid, {}); } catch (e) {}
+      try { updateConversationMessage(newUserMsg.id, {}); } catch (e) {}
+    }
+  })();
 }
 
 // ═══════════════════════════════════════════════
@@ -8969,6 +9538,7 @@ function serializeCanvasV2() {
     if (n.id === 'welcome') return;
     nodes.push({
       id: n.id, type: 'image', url: n.url, name: n.name,
+      originLabel: n.originLabel || '',
       x: n.x, y: n.y,
       width: n.width || 0, height: n.height || 0,
       markers: (n.markers || []).map(m => ({
@@ -9029,6 +9599,7 @@ function serializeCanvasV2() {
       media:      Array.isArray(m.media)   ? m.media   : [],
       error:           m.error || '',
       errorRequestId:  m.errorRequestId || '',
+      taskInfo:        (m.taskInfo && typeof m.taskInfo === 'object') ? m.taskInfo : null,
       // Persist the "查看请求日志" snapshot so historical user messages keep
       // their (!) icon working after a refresh / canvas reload.
       requestLog:      m.requestLog || null,
@@ -9116,7 +9687,7 @@ function restoreCanvasV2(data) {
       // Defensive: only accept mask payloads that look complete.
       const restoredMask = (n.mask && typeof n.mask === 'object' &&
                             (n.mask.alphaUrl || n.mask.visualUrl)) ? n.mask : null;
-      createImageNode(n.url, n.name || '', n.x || 0, n.y || 0, n.id, rs, restoredMarkers, restoredMask);
+      createImageNode(n.url, n.name || '', n.x || 0, n.y || 0, n.id, rs, restoredMarkers, restoredMask, { originLabel: n.originLabel || '' });
     } else if (n.type === 'video' && n.url) {
       createVideoNode(n.url, n.name || '', n.x || 0, n.y || 0, n.id);
     }
@@ -9155,6 +9726,7 @@ function restoreCanvasV2(data) {
       media:     Array.isArray(m.media)   ? m.media   : [],
       error:           wasPending ? '页面刷新前请求未完成，结果未知。' : (m.error || ''),
       errorRequestId:  m.errorRequestId  || '',
+      taskInfo:        (m.taskInfo && typeof m.taskInfo === 'object') ? m.taskInfo : null,
       requestLog:      (m.requestLog && typeof m.requestLog === 'object') ? m.requestLog : null,
     };
   });
