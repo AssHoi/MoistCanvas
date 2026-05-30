@@ -285,7 +285,7 @@
     </main>
 
     <div class="floating-controls">
-        <button class="float-btn" onclick="toggleApiSettings()" id="api-toggle-btn" type="button" title="API 设置">
+        <button class="float-btn" onclick="toggleApiSettings()" id="api-toggle-btn" type="button" title="设置">
             <svg id="icon-api" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M15 7h3a5 5 0 0 1 0 10h-3"></path>
                 <path d="M9 17H6A5 5 0 0 1 6 7h3"></path>
@@ -338,7 +338,7 @@
             if (isApiActive) {
                 showFrame('canvas');
                 apiBtn.classList.remove('active');
-                apiBtn.title = 'API 设置';
+                apiBtn.title = '设置';
                 iconApi.style.display = '';
                 iconBack.style.display = 'none';
             } else {

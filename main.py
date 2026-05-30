@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -380,6 +380,9 @@ def mask_secret(value):
     return f"••••••••{tail}"
 
 def default_api_providers():
+    # ModelScope is no longer a default platform. Users can still add it
+    # manually; the ModelScope-specific support code (provider_key_env,
+    # normalize_provider protocol pinning, chat/image helpers) is kept intact.
     return [
         {
             "id": "apimart",
@@ -391,17 +394,6 @@ def default_api_providers():
             "image_models": ["gpt-image-2", "gpt-image-2-official"],
             "chat_models": [],
             "video_models": ["doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-face", "doubao-seedance-2.0-fast-face"],
-        },
-        {
-            "id": "modelscope",
-            "name": "ModelScope",
-            "base_url": MODELSCOPE_CHAT_BASE_URL,
-            "protocol": "openai",
-            "enabled": True,
-            "primary": False,
-            "image_models": [MODELSCOPE_DEFAULT_IMAGE_MODEL],
-            "chat_models": MODELSCOPE_CHAT_MODELS,
-            "video_models": [],
         },
     ]
 
@@ -423,23 +415,8 @@ def merge_default_api_providers(providers):
                 current_am["image_models"] = list(am_default["image_models"])
             if not current_am.get("video_models"):
                 current_am["video_models"] = list(am_default["video_models"])
-    # 强制保留 ModelScope
-    ms_default = next((d for d in defaults if d["id"] == "modelscope"), None)
-    if ms_default:
-        current = next((item for item in merged if item.get("id") == "modelscope"), None)
-        if not current:
-            merged.append(dict(ms_default))
-        else:
-            if not current.get("base_url"):
-                current["base_url"] = ms_default["base_url"]
-            if not current.get("protocol"):
-                current["protocol"] = "openai"
-            image_models = current.get("image_models") or []
-            chat_models = current.get("chat_models") or []
-            if MODELSCOPE_DEFAULT_IMAGE_MODEL not in image_models:
-                current["image_models"] = [MODELSCOPE_DEFAULT_IMAGE_MODEL, *image_models]
-            if MODELSCOPE_DEFAULT_CHAT_MODEL not in chat_models:
-                current["chat_models"] = [MODELSCOPE_DEFAULT_CHAT_MODEL, *chat_models]
+    # ModelScope is intentionally NOT force-injected anymore. If the user has
+    # added it manually it is left exactly as configured.
     return merged
 
 def normalize_model_list(values):
@@ -508,15 +485,15 @@ def public_provider(provider):
     }
 
 def get_primary_provider_id(providers=None):
-    """返回当前首选 provider 的 id；优先 primary=True 的，否则取第一个非 modelscope 的，再次取第一个。"""
+    """返回当前首选 provider 的 id；优先 primary=True 的，否则取第一个启用的，再次取第一个。"""
     providers = providers if providers is not None else load_api_providers()
     primary = next((p for p in providers if p.get("primary") and p.get("enabled", True)), None)
     if primary:
         return primary["id"]
-    non_ms = next((p for p in providers if p["id"] != "modelscope" and p.get("enabled", True)), None)
-    if non_ms:
-        return non_ms["id"]
-    return providers[0]["id"] if providers else "modelscope"
+    enabled = next((p for p in providers if p.get("enabled", True)), None)
+    if enabled:
+        return enabled["id"]
+    return providers[0]["id"] if providers else "apimart"
 
 def get_api_provider(provider_id="comfly"):
     providers = load_api_providers()

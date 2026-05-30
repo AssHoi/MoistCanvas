@@ -17,21 +17,5 @@
       "doubao-seedance-2.0-face",
       "doubao-seedance-2.0-fast-face"
     ]
-  },
-  {
-    "id": "modelscope",
-    "name": "ModelScope",
-    "base_url": "https://api-inference.modelscope.cn/v1",
-    "protocol": "openai",
-    "enabled": true,
-    "primary": false,
-    "image_models": [
-      "Tongyi-MAI/Z-Image-Turbo"
-    ],
-    "chat_models": [
-      "Qwen/Qwen3-235B-A22B",
-      "MiniMax/MiniMax-M2.7:MiniMax"
-    ],
-    "video_models": []
   }
 ]

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API 设置</title>
+    <title>设置</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script>
@@ -296,6 +296,11 @@
         .update-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
         .update-notes { margin:0 4px 24px; padding:14px 16px; border:1px solid var(--lv-border); border-radius:var(--lv-radius-sm); background:var(--lv-surface-subtle); font-size:12px; line-height:1.55; color:var(--lv-text); white-space:pre-wrap; max-height:240px; overflow:auto; }
         .update-notes-title { font-weight:650; margin-bottom:6px; font-size:12.5px; }
+        /* ── Settings second-level sections (API 设置 / 版本) ── */
+        .settings-section { margin:0 0 40px; }
+        .settings-section:last-child { margin-bottom:0; }
+        .settings-section-head { padding:0 4px 16px; }
+        .settings-section-title { font-size:16px; font-weight:650; letter-spacing:0; color:var(--lv-text); }
         @media (max-width:860px) { .page{padding:24px 16px 60px}.layout{grid-template-columns:1fr;gap:24px}.sidebar{position:static}.form,.model-grid{grid-template-columns:1fr}.models-toolbar{align-items:flex-start;flex-direction:column}.models-toolbar-actions{width:100%;justify-content:flex-end} }
     </style>
 </head>
@@ -304,27 +309,17 @@
         <div class="wrap">
             <header class="page-head">
                 <div>
-                    <div class="title" data-i18n="api.title">API 设置</div>
-                    <div class="sub" data-i18n="api.subtitle">管理平台地址、模型列表和 Key。Key 写入后端 env，页面不会回显完整内容。</div>
+                    <div class="title" data-i18n="api.title">设置</div>
+                    <div class="sub" data-i18n="api.subtitle">管理 API 平台、模型和应用版本更新。</div>
                 </div>
                 <div id="status" class="status"></div>
             </header>
 
-            <!-- In-app auto-update bar (queries GitHub Releases) -->
-            <section id="updateBar" class="update-bar">
-                <div class="update-left">
-                    <span class="update-dot"></span>
-                    <span>当前版本 <b id="updateCurrent">—</b></span>
-                    <span id="updateState" class="hint" style="margin-left:6px"></span>
-                </div>
-                <div class="update-actions">
-                    <a id="updateGhLink" href="#" target="_blank" rel="noopener" class="action-btn" style="display:none">在 GitHub 查看</a>
-                    <button id="updateApplyBtn" class="action-btn primary-btn" type="button" onclick="applyUpdate()" style="display:none">一键更新</button>
-                    <button id="updateRestartBtn" class="action-btn save-btn" type="button" onclick="restartApp()" style="display:none">立即重启</button>
-                    <button id="updateCheckBtn" class="action-btn" type="button" onclick="checkUpdate(false)">检查更新</button>
-                </div>
-            </section>
-            <div id="updateNotes" class="update-notes" style="display:none"></div>
+            <!-- ── 二级标题：API 设置 ── -->
+            <section class="settings-section">
+            <div class="settings-section-head">
+                <div class="settings-section-title" data-i18n="api.apiSectionTitle">API 设置</div>
+            </div>
 
             <div class="layout">
                 <aside class="sidebar">
@@ -461,6 +456,28 @@
 
             </main>
         </div>
+            </section>
+            <!-- ── 二级标题：版本 ── -->
+            <section class="settings-section">
+            <div class="settings-section-head">
+                <div class="settings-section-title" data-i18n="api.versionSectionTitle">版本</div>
+            </div>
+            <!-- In-app auto-update bar (queries GitHub Releases) -->
+            <section id="updateBar" class="update-bar">
+                <div class="update-left">
+                    <span class="update-dot"></span>
+                    <span>当前版本 <b id="updateCurrent">—</b></span>
+                    <span id="updateState" class="hint" style="margin-left:6px"></span>
+                </div>
+                <div class="update-actions">
+                    <a id="updateGhLink" href="#" target="_blank" rel="noopener" class="action-btn" style="display:none">在 GitHub 查看</a>
+                    <button id="updateApplyBtn" class="action-btn primary-btn" type="button" onclick="applyUpdate()" style="display:none">一键更新</button>
+                    <button id="updateRestartBtn" class="action-btn save-btn" type="button" onclick="restartApp()" style="display:none">立即重启</button>
+                    <button id="updateCheckBtn" class="action-btn" type="button" onclick="checkUpdate(false)">检查更新</button>
+                </div>
+            </section>
+            <div id="updateNotes" class="update-notes" style="display:none"></div>
+            </section>
         </div>
     </div>
 
@@ -520,7 +537,9 @@
         function normalizeId(value){
             return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/^-+|-+$/g, '').replace(/-+/g, '-').slice(0, 40);
         }
-        function isBuiltinId(id){ return id === 'comfly' || id === 'modelscope' || id === 'apimart'; }
+        // ModelScope is no longer a built-in default platform; if a user adds it
+        // manually it behaves like any other custom provider (editable, deletable).
+        function isBuiltinId(id){ return id === 'comfly' || id === 'apimart'; }
         // 从平台名生成稳定的 ID；含中文等非 ASCII 会被去掉，剩下为空时自动追加随机后缀
         function deriveIdFromName(name, existingId){
             // 内置 / 已保存过的 ID 不变
@@ -573,7 +592,7 @@
             if(key) item.api_key = key;
         }
         function sortedProviders(){
-            const order = ['apimart', 'modelscope', 'comfly'];
+            const order = ['apimart', 'comfly'];
             return [...providers].sort((a, b) => {
                 const ai = order.indexOf(a.id);
                 const bi = order.indexOf(b.id);
