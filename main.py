@@ -12,6 +12,9 @@ import shutil
 import asyncio
 import subprocess
 import sys
+import zipfile
+import tempfile
+import ipaddress
 import requests
 from typing import List, Dict, Any, Optional
 from threading import Lock
@@ -125,6 +128,38 @@ FX_RATE_CACHE_FILE = os.path.join(DATA_DIR, "fx_rate_cache.json")
 FX_RATE_TTL = 24 * 3600
 PRICING_CACHE_TTL = 12 * 3600
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+# ─── In-app auto-update (GitHub Releases) ─────────────────────────────────────
+# APP_VERSION is the single source of truth for "what version am I". It travels
+# with the code: after an update overwrites main.py, the new file carries the
+# new number, so a restart automatically reports the right version — no separate
+# VERSION file to keep in sync.
+#
+# Release flow for the maintainer:
+#   1. Bump APP_VERSION below (e.g. "1.1.0").
+#   2. Commit + push to GitHub.
+#   3. Create a GitHub Release with tag "v1.1.0" and write the changelog in the
+#      release body (it is shown to users verbatim).
+# Users running an older APP_VERSION will see the new release and can one-click
+# update from inside the app (API settings page / canvas banner).
+#
+# GITHUB_REPO must point at "owner/repo". Set it before your first release
+# either by editing the default here or via the MOISTCANVAS_REPO env var.
+APP_VERSION = "1.0.0"
+GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "your-github-username/MoistCanvas").strip().strip("/")
+GITHUB_API_BASE = "https://api.github.com"
+# Temp workspace for downloading/extracting an update. Lives under runtime/
+# which is gitignored and on the same volume as the install (fast local copies).
+UPDATE_DIR = os.path.join(BASE_DIR, "runtime", "_update")
+UPDATE_LOCK = Lock()
+_UPDATE_IN_PROGRESS = {"value": False}
+# Hard limits for the downloaded/extracted update package. The GitHub source
+# zip of this project is a few MB; these ceilings stop a runaway/oversized
+# archive (or a zip bomb) from filling the user's disk.
+MAX_UPDATE_DOWNLOAD_BYTES = 200 * 1024 * 1024   # 200 MB compressed download cap
+MAX_UPDATE_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # 500 MB total extracted cap
+MAX_UPDATE_FILE_BYTES = 80 * 1024 * 1024        # 80 MB per-file cap
+MAX_UPDATE_FILE_COUNT = 20000                   # entry-count cap
 
 HISTORY_LOCK = Lock()
 GLOBAL_CONFIG_LOCK = Lock()
@@ -2680,6 +2715,540 @@ async def delete_history(req: DeleteHistoryRequest):
     except Exception as e:
         print(f"Delete history error: {e}")
         return {"success": False, "message": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# IN-APP AUTO-UPDATE (GitHub Releases)
+# ═══════════════════════════════════════════════════════════════════════════
+# Strategy: the running app asks GitHub for the latest release tag, compares it
+# to APP_VERSION, and (on user confirmation) downloads the release source zip,
+# overlays ONLY the code files onto the install dir, and reinstalls deps if
+# requirements.txt changed. User data is never touched — see _skip_path_for_update.
+#
+# Why this is safe by construction: the GitHub source archive is built from the
+# git tree, and .gitignore excludes every user-data path (API/.env, output/,
+# runtime/, history.json, data/canvases_v2/, data/*_cache.json), so those files
+# physically cannot be in the archive. _skip_path_for_update is a second guard.
+
+def _parse_version(tag):
+    """'v1.2.3' / '1.2.3' → (1, 2, 3). Non-numeric suffixes are dropped so a
+    pre-release like '1.2.0-beta' compares as (1, 2, 0). Returns () on garbage."""
+    if not tag:
+        return ()
+    s = str(tag).strip().lstrip("vV").strip()
+    parts = []
+    for chunk in s.split("."):
+        m = re.match(r"\d+", chunk)
+        if not m:
+            break
+        parts.append(int(m.group(0)))
+    return tuple(parts)
+
+
+def _is_newer(latest_tag, current_version):
+    """True when latest_tag represents a strictly newer version than current."""
+    lv = _parse_version(latest_tag)
+    cv = _parse_version(current_version)
+    if not lv:
+        return False
+    # Pad to equal length so (1,2) vs (1,2,0) compare equal.
+    n = max(len(lv), len(cv))
+    lv += (0,) * (n - len(lv))
+    cv += (0,) * (n - len(cv))
+    return lv > cv
+
+
+# Top-level path segments that are PURE user/runtime state and must never be
+# overwritten or created from an update archive. Mirrors .gitignore + the
+# build_clean_zip forbidden list. Note: the entire data/ dir is protected —
+# api_providers.json is seeded on fresh install but becomes user-owned at
+# runtime, and merge_default_api_providers() re-applies code defaults anyway.
+_UPDATE_PROTECTED_TOP = {"output", "runtime", "API", ".git", "__pycache__", "dist", "data", ".venv", "venv", "env"}
+_UPDATE_PROTECTED_FILES = {"history.json", ".env", "server.err.log", "server.out.log"}
+
+
+def _skip_path_for_update(rel_path):
+    """rel_path is POSIX-style relative to the install root. True → do not write."""
+    rel = str(rel_path or "").replace("\\", "/").strip("/")
+    if not rel:
+        return True
+    first = rel.split("/", 1)[0]
+    if first in _UPDATE_PROTECTED_TOP:
+        return True
+    name = rel.rsplit("/", 1)[-1]
+    if name in _UPDATE_PROTECTED_FILES:
+        return True
+    if name.endswith((".log", ".pyc", ".pyo")):
+        return True
+    return False
+
+
+def _update_configured():
+    """False when GITHUB_REPO is still the placeholder."""
+    repo = (GITHUB_REPO or "").strip()
+    return bool(repo) and "your-github-username" not in repo and "/" in repo
+
+
+async def _github_latest_release():
+    """Fetch the latest published release. Returns the parsed dict or raises
+    HTTPException with a friendly message."""
+    if not _update_configured():
+        raise HTTPException(status_code=400, detail="尚未配置 GitHub 仓库（请设置 GITHUB_REPO 或 MOISTCANVAS_REPO 环境变量）。")
+    url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases/latest"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "MoistCanvas-Updater",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"无法连接 GitHub：{e}")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="该仓库还没有发布任何 Release。")
+    if resp.status_code == 403 and "rate limit" in resp.text.lower():
+        raise HTTPException(status_code=429, detail="GitHub API 速率限制，请稍后再试（或配置 GITHUB_TOKEN）。")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"GitHub 返回 HTTP {resp.status_code}")
+    return resp.json()
+
+
+def _release_summary(release):
+    tag = release.get("tag_name") or ""
+    return {
+        "tag": tag,
+        "version": tag.lstrip("vV"),
+        "name": release.get("name") or tag,
+        "notes": release.get("body") or "",
+        "published_at": release.get("published_at") or "",
+        "html_url": release.get("html_url") or "",
+        "zipball_url": release.get("zipball_url") or "",
+    }
+
+
+@app.get("/api/app-version")
+async def app_version():
+    return {
+        "version": APP_VERSION,
+        "repo": GITHUB_REPO,
+        "configured": _update_configured(),
+    }
+
+
+@app.get("/api/check-update")
+async def check_update():
+    """Compare APP_VERSION against the latest GitHub release."""
+    release = await _github_latest_release()
+    info = _release_summary(release)
+    has_update = _is_newer(info["tag"], APP_VERSION)
+    return {
+        "current": APP_VERSION,
+        "latest": info["version"],
+        "tag": info["tag"],
+        "has_update": has_update,
+        "name": info["name"],
+        "notes": info["notes"],
+        "published_at": info["published_at"],
+        "html_url": info["html_url"],
+    }
+
+
+def _find_extracted_root(extract_dir):
+    """GitHub zipballs wrap everything in a single '<owner>-<repo>-<sha>/' dir.
+    Return the dir that actually contains main.py."""
+    if os.path.exists(os.path.join(extract_dir, "main.py")):
+        return extract_dir
+    entries = [os.path.join(extract_dir, n) for n in os.listdir(extract_dir)]
+    dirs = [p for p in entries if os.path.isdir(p)]
+    if len(dirs) == 1 and os.path.exists(os.path.join(dirs[0], "main.py")):
+        return dirs[0]
+    # Fallback: any nested dir with main.py
+    for p in dirs:
+        if os.path.exists(os.path.join(p, "main.py")):
+            return p
+    raise HTTPException(status_code=502, detail="更新包结构异常：未找到 main.py。")
+
+
+def _overlay_code_files(src_root):
+    """Copy every non-protected file from src_root onto BASE_DIR, atomically and
+    with rollback, so a mid-way failure (disk full, permission error, a file
+    locked by another process) can't leave a half-new / half-old install.
+
+    Per-file write is atomic: the new bytes are streamed into a temp file in the
+    SAME directory, then `os.replace()` swaps it into place in one step. So the
+    real destination is only ever the intact OLD file or the complete NEW file —
+    never a truncated/partial one, even if the copy fails halfway. Before each
+    swap the existing file is snapshotted into UPDATE_DIR/backup; if any later
+    file fails, every already-swapped file is restored and every newly-created
+    one removed (newest first), then we raise. Returns the relative paths written."""
+    backup_root = os.path.join(UPDATE_DIR, "backup")
+    if os.path.exists(backup_root):
+        shutil.rmtree(backup_root, ignore_errors=True)
+    os.makedirs(backup_root, exist_ok=True)
+
+    written = []
+    # Each entry: (dst_file, backup_path_or_None, existed_before) — only files
+    # whose atomic swap fully COMPLETED are recorded here.
+    done = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(src_root):
+            # Prune protected directories so we never descend into them.
+            rel_dir = os.path.relpath(dirpath, src_root).replace("\\", "/")
+            rel_dir = "" if rel_dir == "." else rel_dir
+            dirnames[:] = [
+                d for d in dirnames
+                if not _skip_path_for_update((rel_dir + "/" + d) if rel_dir else d)
+            ]
+            for fname in filenames:
+                rel = (rel_dir + "/" + fname) if rel_dir else fname
+                if _skip_path_for_update(rel):
+                    continue
+                src_file = os.path.join(dirpath, fname)
+                dst_file = os.path.join(BASE_DIR, rel.replace("/", os.sep))
+                dst_dir = os.path.dirname(dst_file)
+                os.makedirs(dst_dir, exist_ok=True)
+                existed = os.path.exists(dst_file)
+
+                # Snapshot the old file BEFORE touching the destination.
+                backup_path = None
+                if existed:
+                    backup_path = os.path.join(backup_root, rel.replace("/", os.sep))
+                    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+                    shutil.copy2(dst_file, backup_path)
+
+                # Stage into a temp file in the same dir, then atomically swap.
+                # A failure here only dirties the temp; dst_file is untouched.
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=dst_dir, prefix=".upd_", suffix=".tmp")
+                os.close(tmp_fd)
+                try:
+                    shutil.copy2(src_file, tmp_path)
+                    os.replace(tmp_path, dst_file)  # atomic on same filesystem
+                except Exception:
+                    try:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    except Exception:
+                        pass
+                    raise
+
+                done.append((dst_file, backup_path, existed))
+                written.append(rel)
+        return written
+    except Exception as e:
+        # Roll back fully-completed swaps, newest first, to restore prior state.
+        for dst_file, backup_path, existed in reversed(done):
+            try:
+                if existed and backup_path and os.path.exists(backup_path):
+                    os.replace(backup_path, dst_file)
+                elif not existed and os.path.exists(dst_file):
+                    os.remove(dst_file)
+            except Exception:
+                pass  # best-effort; keep restoring the rest
+        raise HTTPException(
+            status_code=500,
+            detail=f"更新写入失败，已回滚到旧版本（未改动依赖以外的任何东西）：{e}",
+        )
+
+
+def _read_file_bytes(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except Exception:
+        return b""
+
+
+def _is_loopback_ip(ip):
+    """True if ip is a loopback address (127.0.0.0/8 or ::1, incl. IPv4-mapped).
+
+    Used on the REAL connection peer (request.client.host), which — unlike the
+    Host header — the client cannot spoof."""
+    ip = (ip or "").strip().strip("[]")
+    if not ip:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if addr.is_loopback:
+        return True
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return bool(mapped is not None and mapped.is_loopback)
+
+
+def _assert_same_origin(request):
+    """Locality + CSRF guard for the powerful update / restart endpoints.
+
+    Two independent checks:
+
+      1. LOCALITY — the real TCP peer (request.client.host) must be loopback.
+         This is the actual connection address from the ASGI scope; unlike the
+         Host / Origin / Referer headers it cannot be forged by the client. The
+         server binds 0.0.0.0, so without this a LAN machine could call these
+         endpoints while spoofing `Host: localhost:3000`. Gating on the peer IP
+         (not the Host header) closes that bypass — and it must gate ALL calls,
+         because the Origin check below is itself defeatable by a non-browser
+         client that simply sends a matching Origin header.
+
+      2. CSRF — if a browser supplied Origin/Referer, it must be same-origin as
+         Host. A malicious page on the *local* machine connects from loopback
+         too (passing check 1), so this is what blocks drive-by web CSRF.
+
+    A local non-browser client (curl on this machine, no Origin) passes both.
+    Trade-off: update / restart cannot be triggered from another machine's
+    browser. That is intentional — these replace code and restart the server,
+    so we keep them strictly local.
+    """
+    peer = (getattr(request, "client", None).host if getattr(request, "client", None) else "") or ""
+    if not _is_loopback_ip(peer):
+        raise HTTPException(status_code=403, detail="更新 / 重启接口只能从本机访问。")
+
+    origin = request.headers.get("origin") or ""
+    referer = request.headers.get("referer") or ""
+    src_netloc = ""
+    if origin:
+        src_netloc = urllib.parse.urlparse(origin).netloc
+    elif referer:
+        src_netloc = urllib.parse.urlparse(referer).netloc
+    if src_netloc:
+        host = (request.headers.get("host") or "").lower()
+        if src_netloc.lower() != host:
+            raise HTTPException(
+                status_code=403,
+                detail="跨站请求被拒绝：更新 / 重启接口仅接受本应用页面发起的请求。",
+            )
+
+
+def _safe_extract_zip(zip_path, dest_dir):
+    """Extract a zip with zip-slip protection and size/count ceilings.
+
+    Rejects absolute paths and '..' traversal, and aborts before writing if the
+    archive exceeds MAX_UPDATE_* limits — so a malformed/oversized release can't
+    escape dest_dir or fill the disk."""
+    dest_root = os.path.abspath(dest_dir)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        infos = zf.infolist()
+        if len(infos) > MAX_UPDATE_FILE_COUNT:
+            raise HTTPException(status_code=502, detail="更新包文件数量异常，已取消。")
+        total = 0
+        for info in infos:
+            name = info.filename
+            # Normalise + reject traversal / absolute paths (zip-slip).
+            if name.startswith("/") or name.startswith("\\") or ".." in name.replace("\\", "/").split("/"):
+                raise HTTPException(status_code=502, detail=f"更新包包含非法路径，已取消：{name}")
+            if info.file_size > MAX_UPDATE_FILE_BYTES:
+                raise HTTPException(status_code=502, detail="更新包含超大文件，已取消。")
+            total += info.file_size
+            if total > MAX_UPDATE_UNCOMPRESSED_BYTES:
+                raise HTTPException(status_code=502, detail="更新包解压后体积超限，已取消。")
+        # Validation passed → extract member-by-member, double-checking the
+        # resolved destination stays inside dest_root.
+        for info in infos:
+            target = os.path.abspath(os.path.join(dest_root, info.filename))
+            if os.path.commonpath([dest_root, target]) != dest_root:
+                raise HTTPException(status_code=502, detail="更新包路径越界，已取消。")
+            zf.extract(info, dest_root)
+
+
+def _pip_install_requirements(requirements_path):
+    """Run pip install -r against the running (portable) interpreter. Returns
+    (ok: bool, error_tail: str)."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", requirements_path,
+             "--no-warn-script-location"],
+            capture_output=True, text=True, timeout=600,
+        )
+        if proc.returncode == 0:
+            return True, ""
+        return False, (proc.stderr or proc.stdout or "")[-500:]
+    except Exception as e:
+        return False, str(e)
+
+
+def _install_deps_then_overlay(src_root):
+    """Given an extracted release root, install changed deps FIRST, then overlay
+    code — never the reverse. Raises HTTPException (and overlays NOTHING) when
+    dependency installation fails, so a failed update can never leave the install
+    in a "new code + old deps" state. Returns (written, reqs_changed, deps_done).
+
+    This is the safety-critical ordering from the review; it's factored out so it
+    can be unit-tested without the network/download path."""
+    old_reqs = _read_file_bytes(os.path.join(BASE_DIR, "requirements.txt"))
+    new_reqs = _read_file_bytes(os.path.join(src_root, "requirements.txt"))
+    reqs_changed = bool(new_reqs) and (new_reqs.strip() != old_reqs.strip())
+
+    # STEP 1 — dependencies, from the STAGED requirements (not yet copied in).
+    deps_reinstalled = False
+    if reqs_changed:
+        ok, deps_error = _pip_install_requirements(os.path.join(src_root, "requirements.txt"))
+        if not ok:
+            raise HTTPException(
+                status_code=502,
+                detail=("依赖安装失败，已取消本次更新（未改动任何代码，当前版本仍可正常使用）。"
+                        "请检查网络后重试，或手动运行 安装依赖.bat。\n" + (deps_error or "")),
+            )
+        deps_reinstalled = True
+
+    # STEP 2 — only now is it safe to swap code in.
+    written = _overlay_code_files(src_root)
+    return written, reqs_changed, deps_reinstalled
+
+
+@app.post("/api/apply-update")
+async def apply_update(request: Request):
+    """Download the latest release source, then — in this order — install any
+    changed dependencies FIRST, and only overlay code if that succeeds. Never
+    touches user data.
+
+    Ordering rationale: the dangerous failure is "new code + old deps", which can
+    crash on the next launch. By installing deps from the staged package before
+    swapping any code, a pip failure aborts the whole update with the install
+    left untouched (old code + old requirements still on disk, still runnable),
+    and the frontend never offers a restart."""
+    # CSRF guard — block cross-site web pages from triggering an update.
+    _assert_same_origin(request)
+    # Single-flight guard: reject a second concurrent update.
+    with UPDATE_LOCK:
+        if _UPDATE_IN_PROGRESS["value"]:
+            raise HTTPException(status_code=409, detail="已有更新正在进行中。")
+        _UPDATE_IN_PROGRESS["value"] = True
+    try:
+        release = await _github_latest_release()
+        info = _release_summary(release)
+        if not _is_newer(info["tag"], APP_VERSION):
+            return {"ok": True, "updated": False, "message": "已是最新版本。", "current": APP_VERSION}
+
+        zip_url = info["zipball_url"]
+        if not zip_url:
+            raise HTTPException(status_code=502, detail="Release 缺少源码下载地址。")
+
+        # Fresh temp workspace.
+        if os.path.exists(UPDATE_DIR):
+            shutil.rmtree(UPDATE_DIR, ignore_errors=True)
+        os.makedirs(UPDATE_DIR, exist_ok=True)
+        zip_path = os.path.join(UPDATE_DIR, "update.zip")
+        extract_dir = os.path.join(UPDATE_DIR, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        headers = {"User-Agent": "MoistCanvas-Updater", "Accept": "application/vnd.github+json"}
+        token = os.getenv("GITHUB_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        # Download the source zipball with a hard size cap (abort mid-stream if
+        # it blows past MAX_UPDATE_DOWNLOAD_BYTES).
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0), follow_redirects=True) as client:
+                async with client.stream("GET", zip_url, headers=headers) as resp:
+                    resp.raise_for_status()
+                    clen = resp.headers.get("content-length")
+                    if clen and int(clen) > MAX_UPDATE_DOWNLOAD_BYTES:
+                        raise HTTPException(status_code=502, detail="更新包过大，已取消下载。")
+                    downloaded = 0
+                    with open(zip_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(65536):
+                            downloaded += len(chunk)
+                            if downloaded > MAX_UPDATE_DOWNLOAD_BYTES:
+                                raise HTTPException(status_code=502, detail="更新包过大，已取消下载。")
+                            f.write(chunk)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"下载更新包失败：{e}")
+
+        # Extract with zip-slip + size/count protection.
+        try:
+            _safe_extract_zip(zip_path, extract_dir)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"解压更新包失败：{e}")
+
+        src_root = _find_extracted_root(extract_dir)
+
+        # Deps-first, then code-overlay (raises and overlays nothing if pip
+        # fails — see _install_deps_then_overlay).
+        written, reqs_changed, deps_reinstalled = _install_deps_then_overlay(src_root)
+
+        return {
+            "ok": True,
+            "updated": True,
+            "from": APP_VERSION,
+            "to": info["version"],
+            "files_written": len(written),
+            "deps_changed": reqs_changed,
+            "deps_reinstalled": deps_reinstalled,
+            "restart_required": True,
+        }
+    finally:
+        # Always clean the temp workspace and release the single-flight guard,
+        # whether we succeeded or aborted (e.g. on a deps-install failure).
+        shutil.rmtree(UPDATE_DIR, ignore_errors=True)
+        with UPDATE_LOCK:
+            _UPDATE_IN_PROGRESS["value"] = False
+
+
+@app.post("/api/restart-app")
+async def restart_app(request: Request):
+    """Relaunch the run script in a fresh window, then exit this process. A short
+    delay in the relauncher lets port 3000 free up before the new server binds.
+    Windows-only auto-restart; other platforms just report unsupported so the
+    user restarts manually."""
+    # CSRF guard — a web page must not be able to kill/restart the local server.
+    _assert_same_origin(request)
+    if not sys.platform.startswith("win"):
+        raise HTTPException(status_code=400, detail="自动重启仅支持 Windows，请手动重启。")
+
+    # Find the run .bat by its marker (same heuristic build_clean_zip uses).
+    run_bat = None
+    for name in os.listdir(BASE_DIR):
+        if name.lower().endswith(".bat"):
+            try:
+                with open(os.path.join(BASE_DIR, name), "r", encoding="utf-8", errors="ignore") as f:
+                    if "MoistCanvas - run" in f.read():
+                        run_bat = name
+                        break
+            except Exception:
+                continue
+    if not run_bat:
+        raise HTTPException(status_code=404, detail="未找到启动脚本，请手动重启。")
+
+    relauncher = os.path.join(UPDATE_DIR, "_relaunch.bat")
+    os.makedirs(UPDATE_DIR, exist_ok=True)
+    with open(relauncher, "w", encoding="utf-8") as f:
+        # chcp 65001 switches the console to UTF-8 so the (possibly non-ASCII)
+        # run-script path is interpreted correctly regardless of system locale.
+        f.write(
+            "@echo off\r\n"
+            "chcp 65001 >nul\r\n"
+            "timeout /t 2 /nobreak >nul\r\n"
+            f'cd /d "{BASE_DIR}"\r\n'
+            f'start "" "{os.path.join(BASE_DIR, run_bat)}"\r\n'
+        )
+
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
+    try:
+        subprocess.Popen(
+            ["cmd", "/c", relauncher],
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重启失败：{e}")
+
+    # Give the HTTP response a beat to flush, then hard-exit so the port frees.
+    def _bye():
+        time.sleep(1.0)
+        os._exit(0)
+    import threading
+    threading.Thread(target=_bye, daemon=True).start()
+    return {"ok": True, "message": "正在重启，请稍候几秒后刷新页面。"}
 
 
 if __name__ == "__main__":

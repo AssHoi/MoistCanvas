@@ -1887,6 +1887,31 @@
       pointer-events: none;
       z-index: 30;
     }
+    /* Right-panel drag-drop hint — fires when dragging external image files
+       over the conversation/composer area. Subtle accent ring + tiny label
+       in the composer area so the user knows the drop will create a ref
+       chip rather than a chat attachment. */
+    #right-panel.drop-target-active {
+      box-shadow: inset 0 0 0 2px var(--accent);
+    }
+    #right-panel.drop-target-active #composer {
+      background: rgba(16, 132, 102, 0.06);
+    }
+    #right-panel.drop-target-active #composer::before {
+      content: '松开鼠标添加为参考图';
+      position: absolute;
+      top: -22px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      color: var(--accent);
+      background: var(--panel-bg);
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid var(--accent);
+      pointer-events: none;
+      z-index: 5;
+    }
+    #right-panel #composer { position: relative; }
 
     #estimate-price {
       flex: 1 1 auto;
@@ -7713,6 +7738,12 @@ function closeHistoryModal() {
 (function initCanvasDrop() {
   const area = document.getElementById('canvas-area');
   if (!area) return;
+  function clearDragHighlights() {
+    area.classList.remove('dragover');
+    const panel = document.getElementById('right-panel');
+    if (panel) panel.classList.remove('drop-target-active');
+  }
+  window.clearExternalImageDragHighlights = clearDragHighlights;
   function hasFiles(e) {
     const dt = e.dataTransfer;
     if (!dt) return false;
@@ -7728,14 +7759,15 @@ function closeHistoryModal() {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    area.classList.add('dragover');
   });
   area.addEventListener('dragleave', (e) => {
-    if (e.target === area) area.classList.remove('dragover');
+    if (e.target === area || !area.contains(e.relatedTarget)) area.classList.remove('dragover');
   });
   area.addEventListener('drop', async (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    area.classList.remove('dragover');
+    clearDragHighlights();
     const files = Array.from(e.dataTransfer.files || []);
     if (!files.length) return;
     const images = files.filter(f => /^image\/(png|jpe?g|webp)$/i.test(f.type));
@@ -7750,6 +7782,8 @@ function closeHistoryModal() {
     const wy = (py - ty) / scale;
     await uploadImagesAtPoint(images, wx, wy);
   });
+  document.addEventListener('dragend', clearDragHighlights);
+  document.addEventListener('drop', clearDragHighlights);
 })();
 
 async function uploadImagesAtPoint(files, wx, wy) {
@@ -7796,6 +7830,150 @@ async function uploadImagesAtPoint(files, wx, wy) {
     showToast('上传失败：' + err.message);
   }
 }
+
+// ═══════════════════════════════════════════════
+// PROMPT-AREA EXTERNAL IMAGE DROP
+// ─────────────────────────────────────────────────────────────────────────
+// Dropping an image file from the OS file manager onto the right-side
+// conversation/composer area is treated as "one-step add as reference":
+//   1) upload via the same endpoint canvas drops use
+//   2) create a real image node on the canvas (so the asset behaves like
+//      every other image — moveable, exportable, persisted)
+//   3) push to refs[] with empty label, then renumberRefs() so it gets the
+//      smallest unused @图N slot — pre-existing @图1 stays @图1
+//   4) insertAtRef(label) drops the chip at the editor caret (falls back to
+//      end of prompt when the editor isn't focused)
+//
+// The image is NEVER inserted into the contenteditable as a base64 <img>.
+// We preventDefault on dragover + drop to suppress the browser's default
+// content-editable handling.
+// ═══════════════════════════════════════════════
+async function addExternalImagesAsPromptRefs(files) {
+  const fileList = Array.from(files || []);
+  if (!fileList.length) return;
+  const images = fileList.filter(f => /^image\/(png|jpe?g|webp)$/i.test(f.type));
+  if (images.length === 0) { showToast('仅支持 PNG / JPG / WebP'); return; }
+  if (images.length < fileList.length) {
+    showToast('已忽略 ' + (fileList.length - images.length) + ' 个非图片文件');
+  }
+
+  setStatus('上传中，请稍候...', false);
+  let uploaded;
+  try {
+    const fd = new FormData();
+    images.forEach(f => fd.append('files', f));
+    const res = await fetch('/api/ai/upload', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'HTTP ' + res.status);
+    }
+    const data = await res.json();
+    uploaded = data.files || [];
+    setStatus('', false);
+  } catch (err) {
+    setStatus('上传失败：' + err.message, true);
+    showToast('上传失败：' + err.message);
+    return;
+  }
+  if (!uploaded.length) { showToast('上传无结果'); return; }
+
+  pushUndoSnapshot('拖入图片为参考');
+
+  // Smart placement near current viewport center — avoids stacking on top of
+  // existing images. Same helper canvas-image generation uses.
+  const positions = placeMediaGroupNearViewport(
+    uploaded.length, 260, 400, 200, canvasCenter()
+  );
+
+  // Step A: create canvas nodes and push refs with empty label. We do NOT
+  // assign labels here — renumberRefs() owns the smallest-unused-slot
+  // policy. Pushing without a label is the SAME idiom used elsewhere in
+  // the codebase (see addSelectedToChat).
+  const createdRefs = [];
+  uploaded.forEach((f, i) => {
+    const pos = positions[i] || { x: 0, y: 0 };
+    const id = createImageNode(
+      f.url, f.name, pos.x, pos.y,
+      null, null, null, null,
+      { originLabel: '外部导入：' + (f.name || 'image') },
+    );
+    if (!id) return;
+    const ref = { nodeId: id, type: 'image', url: f.url, name: f.name || '', label: '' };
+    refs.push(ref);
+    createdRefs.push(ref);
+  });
+
+  if (createdRefs.length === 0) {
+    showToast('未能创建图片节点');
+    return;
+  }
+
+  // Step B: allocate stable @图N labels. Existing @图1 etc. are preserved.
+  // New refs (label === '') fill the smallest unused index.
+  renumberRefs();
+  renderRefBar();
+
+  // Step C: insert chips at the editor caret. Each insertAtRef advances the
+  // caret past the inserted chip, so a multi-drop ends up as @图N @图N+1 ...
+  // in order without overwriting any earlier token. If the user wasn't
+  // focused on the editor before the drop, _insertRefChipAtSelection falls
+  // back to inserting at the end of the canonical prompt.
+  createdRefs.forEach(ref => { if (ref.label) insertAtRef(ref.label); });
+
+  scheduleSave();
+  showToast('已添加 ' + createdRefs.length + ' 张参考图');
+  // Keep keyboard focus in the editor so the user can keep typing.
+  if (promptEditor) promptEditor.focus();
+}
+
+(function initPromptDrop() {
+  const panel = document.getElementById('right-panel');
+  if (!panel) return;
+
+  function hasFiles(e) {
+    const dt = e.dataTransfer;
+    if (!dt) return false;
+    if (dt.types && Array.from(dt.types).indexOf('Files') >= 0) return true;
+    return !!(dt.files && dt.files.length > 0);
+  }
+
+  // Use bubble-phase listeners on the panel; preventDefault on dragover +
+  // drop suppresses the contenteditable default (which would otherwise
+  // insert a base64 <img> into the prompt editor).
+  panel.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (typeof window.clearExternalImageDragHighlights === 'function') window.clearExternalImageDragHighlights();
+    panel.classList.add('drop-target-active');
+  });
+  panel.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    const area = document.getElementById('canvas-area');
+    if (area) area.classList.remove('dragover');
+    panel.classList.add('drop-target-active');
+  });
+  panel.addEventListener('dragleave', (e) => {
+    // Only clear the highlight when the drag actually leaves the panel —
+    // dragleave fires on every child transition otherwise.
+    if (e.target === panel || !panel.contains(e.relatedTarget)) {
+      panel.classList.remove('drop-target-active');
+    }
+  });
+  panel.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    // Stop propagation so the canvas-area drop handler (a sibling) cannot
+    // also process the same files.
+    e.stopPropagation();
+    if (typeof window.clearExternalImageDragHighlights === 'function') window.clearExternalImageDragHighlights();
+    panel.classList.remove('drop-target-active');
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    await addExternalImagesAsPromptRefs(files);
+  });
+})();
 
 // ═══════════════════════════════════════════════
 // MODEL CATALOG (from /api/model-catalog)
