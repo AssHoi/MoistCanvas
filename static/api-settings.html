@@ -286,6 +286,16 @@
         .ms-hint .ms-line { display:block; }
         .ms-hint .inline-code { display:inline-flex; align-items:center; min-height:20px; padding:0 7px; border-radius:var(--lv-radius-sm); background:var(--lv-surface-subtle); color:var(--lv-text); border:1px solid var(--lv-border); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; font-weight:500; vertical-align:middle; }
         .empty { padding:18px; border:1px dashed var(--lv-border); border-radius:var(--lv-radius-sm); color:var(--lv-faint); text-align:center; font-size:12px; font-weight:400; background:var(--lv-surface-subtle); }
+        /* ── In-app update bar ── */
+        .update-bar { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin:0 4px 20px; padding:12px 16px; border:1px solid var(--lv-border); border-radius:var(--lv-radius-sm); background:var(--lv-surface-subtle); }
+        .update-bar.has-update { border-color:var(--lv-accent); background:var(--lv-surface); }
+        .update-left { display:flex; align-items:center; gap:10px; font-size:12.5px; color:var(--lv-text); }
+        .update-left b { font-weight:650; }
+        .update-dot { width:8px; height:8px; border-radius:50%; background:var(--lv-faint); flex:none; }
+        .update-bar.has-update .update-dot { background:var(--lv-accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--lv-accent) 24%, transparent); }
+        .update-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .update-notes { margin:0 4px 24px; padding:14px 16px; border:1px solid var(--lv-border); border-radius:var(--lv-radius-sm); background:var(--lv-surface-subtle); font-size:12px; line-height:1.55; color:var(--lv-text); white-space:pre-wrap; max-height:240px; overflow:auto; }
+        .update-notes-title { font-weight:650; margin-bottom:6px; font-size:12.5px; }
         @media (max-width:860px) { .page{padding:24px 16px 60px}.layout{grid-template-columns:1fr;gap:24px}.sidebar{position:static}.form,.model-grid{grid-template-columns:1fr}.models-toolbar{align-items:flex-start;flex-direction:column}.models-toolbar-actions{width:100%;justify-content:flex-end} }
     </style>
 </head>
@@ -299,6 +309,22 @@
                 </div>
                 <div id="status" class="status"></div>
             </header>
+
+            <!-- In-app auto-update bar (queries GitHub Releases) -->
+            <section id="updateBar" class="update-bar">
+                <div class="update-left">
+                    <span class="update-dot"></span>
+                    <span>当前版本 <b id="updateCurrent">—</b></span>
+                    <span id="updateState" class="hint" style="margin-left:6px"></span>
+                </div>
+                <div class="update-actions">
+                    <a id="updateGhLink" href="#" target="_blank" rel="noopener" class="action-btn" style="display:none">在 GitHub 查看</a>
+                    <button id="updateApplyBtn" class="action-btn primary-btn" type="button" onclick="applyUpdate()" style="display:none">一键更新</button>
+                    <button id="updateRestartBtn" class="action-btn save-btn" type="button" onclick="restartApp()" style="display:none">立即重启</button>
+                    <button id="updateCheckBtn" class="action-btn" type="button" onclick="checkUpdate(false)">检查更新</button>
+                </div>
+            </section>
+            <div id="updateNotes" class="update-notes" style="display:none"></div>
 
             <div class="layout">
                 <aside class="sidebar">
@@ -946,9 +972,105 @@
         window.addEventListener('studio-lang-change', () => {
             renderEditor();
         });
+        // ── In-app auto-update ───────────────────────────────────────────────
+        let _updateLatestTag = '';
+        function _updEl(id){ return document.getElementById(id); }
+        function _setUpdState(text){ const el=_updEl('updateState'); if(el) el.textContent = text || ''; }
+        async function initUpdate(){
+            try {
+                const v = await fetch('/api/app-version').then(r => r.json());
+                const cur = _updEl('updateCurrent');
+                if(cur) cur.textContent = 'v' + (v.version || '—');
+                if(!v.configured){
+                    _setUpdState('（未配置 GitHub 仓库，无法检查更新）');
+                    const btn = _updEl('updateCheckBtn'); if(btn){ btn.disabled = true; btn.style.opacity = '.5'; }
+                    return;
+                }
+                // Auto-check once on load, quietly (no error toast on failure).
+                checkUpdate(true);
+            } catch(e) { /* version endpoint missing → older backend; stay silent */ }
+        }
+        async function checkUpdate(silent){
+            const bar = _updEl('updateBar');
+            const applyBtn = _updEl('updateApplyBtn');
+            const ghLink = _updEl('updateGhLink');
+            const notes = _updEl('updateNotes');
+            _setUpdState('检查中…');
+            try {
+                const r = await fetch('/api/check-update');
+                const data = await r.json();
+                if(!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+                if(data.has_update){
+                    _updateLatestTag = data.tag || '';
+                    bar.classList.add('has-update');
+                    _setUpdState('发现新版本 v' + data.latest + '（当前 v' + data.current + '）');
+                    if(applyBtn) applyBtn.style.display = '';
+                    if(ghLink && data.html_url){ ghLink.href = data.html_url; ghLink.style.display = ''; }
+                    if(notes){
+                        notes.style.display = '';
+                        notes.innerHTML = '<div class="update-notes-title">' + escapeHtml(data.name || ('v' + data.latest)) + ' 更新内容</div>' + escapeHtml(data.notes || '（无更新说明）');
+                    }
+                } else {
+                    bar.classList.remove('has-update');
+                    _setUpdState('已是最新版本');
+                    if(applyBtn) applyBtn.style.display = 'none';
+                    if(notes) notes.style.display = 'none';
+                }
+            } catch(err) {
+                if(!silent) _setUpdState('检查失败：' + (err.message || err));
+            }
+        }
+        async function applyUpdate(){
+            const applyBtn = _updEl('updateApplyBtn');
+            const restartBtn = _updEl('updateRestartBtn');
+            if(applyBtn){ applyBtn.disabled = true; applyBtn.textContent = '更新中…'; }
+            _setUpdState('正在下载并应用更新，请勿关闭窗口…');
+            try {
+                const r = await fetch('/api/apply-update', { method:'POST' });
+                const data = await r.json();
+                if(!r.ok || !data.ok) throw new Error(data.detail || data.message || ('HTTP ' + r.status));
+                if(!data.updated){
+                    _setUpdState(data.message || '已是最新版本');
+                    if(applyBtn){ applyBtn.disabled = false; applyBtn.textContent = '一键更新'; applyBtn.style.display = 'none'; }
+                    return;
+                }
+                let msg = '✅ 更新完成 v' + data.from + ' → v' + data.to + '，重启后生效。';
+                if(data.deps_changed){ msg += data.deps_reinstalled ? '（依赖已自动更新）' : '（⚠ 依赖自动安装失败，请重启前手动运行 安装依赖.bat）'; }
+                _setUpdState(msg);
+                if(applyBtn) applyBtn.style.display = 'none';
+                if(restartBtn) restartBtn.style.display = '';
+            } catch(err) {
+                _setUpdState('更新失败：' + (err.message || err));
+                if(applyBtn){ applyBtn.disabled = false; applyBtn.textContent = '一键更新'; }
+            }
+        }
+        async function restartApp(){
+            const restartBtn = _updEl('updateRestartBtn');
+            if(restartBtn){ restartBtn.disabled = true; restartBtn.textContent = '重启中…'; }
+            _setUpdState('正在重启服务，请稍候几秒后刷新页面…');
+            try {
+                const r = await fetch('/api/restart-app', { method:'POST' });
+                const data = await r.json();
+                if(!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+                // Server will exit shortly; poll until it comes back, then reload.
+                setTimeout(() => {
+                    let tries = 0;
+                    const t = setInterval(async () => {
+                        tries++;
+                        try { await fetch('/api/app-version', { cache:'no-store' }); clearInterval(t); location.reload(); }
+                        catch(e) { if(tries > 30) clearInterval(t); }
+                    }, 1000);
+                }, 2500);
+            } catch(err) {
+                _setUpdState('重启失败，请手动关闭运行窗口后重新打开：' + (err.message || err));
+                if(restartBtn){ restartBtn.disabled = false; restartBtn.textContent = '立即重启'; }
+            }
+        }
+
         window.onload = () => {
             if(window.StudioI18n) window.StudioI18n.apply();
             loadProviders();
+            initUpdate();
             // 平台名输入时实时预览生成的 ID
             if(nameInput) nameInput.addEventListener('input', updateIdPreview);
         };

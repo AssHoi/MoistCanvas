@@ -222,6 +222,59 @@
 
         .float-btn svg { width: 16px; height: 16px; }
 
+        /* Update-available dot on the API settings button */
+        .float-btn { position: relative; }
+        .update-badge {
+            position: absolute;
+            top: -2px; right: -2px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #e5484d;
+            border: 2px solid var(--lv-surface);
+            display: none;
+        }
+        .update-badge.show { display: block; }
+
+        /* One-time "new version" banner (bottom-left, above the float controls) */
+        .update-banner {
+            position: fixed;
+            left: 18px;
+            bottom: 64px;
+            z-index: 201;
+            max-width: 320px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: var(--lv-radius-sm, 10px);
+            background: var(--lv-surface);
+            border: 1px solid var(--lv-accent);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            font-size: 12.5px;
+            color: var(--lv-text);
+        }
+        .update-banner.show { display: flex; }
+        .update-banner b { font-weight: 650; }
+        .update-banner .ub-go {
+            cursor: pointer;
+            border: 1px solid var(--lv-accent);
+            background: var(--lv-accent);
+            color: var(--lv-on-dark);
+            border-radius: var(--lv-radius-sm, 8px);
+            padding: 4px 10px;
+            font-size: 12px;
+            font-family: inherit;
+        }
+        .update-banner .ub-x {
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: var(--lv-faint);
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 2px;
+        }
+
     </style>
 </head>
 
@@ -242,7 +295,16 @@
                 <line x1="19" y1="12" x2="5" y2="12"></line>
                 <polyline points="12 19 5 12 12 5"></polyline>
             </svg>
+            <span id="update-badge" class="update-badge" title="发现新版本"></span>
         </button>
+    </div>
+
+    <!-- One-time new-version banner; links into the API settings page where the
+         full changelog + 一键更新 lives. -->
+    <div id="update-banner" class="update-banner">
+        <span>发现新版本 <b id="update-banner-ver"></b></span>
+        <button class="ub-go" type="button" onclick="goUpdate()">去更新</button>
+        <button class="ub-x" type="button" title="忽略" onclick="dismissUpdateBanner()">×</button>
     </div>
 
     <script>
@@ -322,9 +384,41 @@
             });
         }
 
+        // ── Passive "new version available" hint ────────────────────────────
+        // Checks GitHub once per browser session (sessionStorage gate), then
+        // shows a dot on the API button + a dismissable banner. The full
+        // changelog and 一键更新 live in the API settings page. Fully guarded:
+        // any failure (old backend, offline, unconfigured repo) stays silent.
+        function dismissUpdateBanner() {
+            const b = document.getElementById('update-banner');
+            if (b) b.classList.remove('show');
+        }
+        function goUpdate() {
+            dismissUpdateBanner();
+            const apiFrame = document.getElementById('frame-api-settings');
+            if (apiFrame && !apiFrame.classList.contains('active')) toggleApiSettings();
+        }
+        async function checkAppUpdate() {
+            try {
+                if (sessionStorage.getItem('mc_update_checked') === '1') return;
+                const r = await fetch('/api/check-update');
+                if (!r.ok) return; // 404 (no release) / unconfigured / rate-limited → silent
+                const data = await r.json();
+                sessionStorage.setItem('mc_update_checked', '1');
+                if (!data.has_update) return;
+                const badge = document.getElementById('update-badge');
+                if (badge) badge.classList.add('show');
+                const ver = document.getElementById('update-banner-ver');
+                if (ver) ver.textContent = 'v' + data.latest;
+                const banner = document.getElementById('update-banner');
+                if (banner) banner.classList.add('show');
+            } catch (e) { /* stay silent — update hint is best-effort */ }
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             if (window.StudioI18n) window.StudioI18n.apply();
             broadcastLanguage();
+            checkAppUpdate();
         });
 
         document.querySelectorAll('iframe').forEach(f => {
