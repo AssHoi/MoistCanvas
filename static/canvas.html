@@ -498,6 +498,35 @@
       border-color: rgba(251,191,36,.28);
     }
 
+    #gate-update-notice {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(217,119,6,.28);
+      background: #fff8e6;
+      color: #7c2d12;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    #gate-update-notice strong {
+      color: inherit;
+      font-weight: 800;
+    }
+    #gate-update-notice a {
+      color: inherit;
+      font-weight: 800;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    body.theme-dark #gate-update-notice {
+      background: rgba(146,64,14,.18);
+      color: #fed7aa;
+      border-color: rgba(251,191,36,.28);
+    }
+
     /* Gate empty/loading/error state */
     .gate-empty-icon {
       width: 44px; height: 44px;
@@ -3125,6 +3154,7 @@
       <span aria-hidden="true">⚠️</span>
       <span>回收站中的画布会在 30 天后自动清理，期间可以随时恢复。</span>
     </div>
+    <div id="gate-update-notice" role="status" aria-live="polite"></div>
     <div class="gate-list-wrap">
       <div id="gate-list" class="gate-list"></div>
       <div id="gate-empty" class="gate-empty" style="display:none">暂无画布，点击"新建画布"开始。</div>
@@ -9404,6 +9434,50 @@ let pendingPurgeId = null; // canvas id currently showing in-card purge confirma
 let pendingTrashId = null; // canvas id currently showing in-card "move to trash" confirmation
 let gateLoading = false;   // true while a list load is in-flight; renders a 加载中... empty-state
 let gateLoadError = null;  // string message when the active loader failed
+let startupUpdateStatus = null;
+
+function renderStartupUpdateNotice() {
+  const box = document.getElementById('gate-update-notice');
+  if (!box) return;
+  const st = startupUpdateStatus || {};
+  const failedWithUpdate = st.status === 'failed' && (st.latest || st.tag);
+  if (!failedWithUpdate || gateMode !== 'normal') {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'flex';
+  box.innerHTML = '';
+  const title = document.createElement('strong');
+  title.textContent = '启动自动更新失败';
+  const detail = document.createElement('div');
+  const latest = st.latest || st.tag || '未知';
+  const current = st.current || '未知';
+  const message = st.message || '请稍后重试，或手动下载最新版本。';
+  detail.textContent = '当前版本 ' + current + '，最新版本 ' + latest + '。' + message;
+  box.appendChild(title);
+  box.appendChild(detail);
+  if (st.html_url) {
+    const link = document.createElement('a');
+    link.href = st.html_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = '打开 GitHub Release';
+    box.appendChild(link);
+  }
+}
+
+async function loadStartupUpdateStatus() {
+  try {
+    const res = await fetch('/api/update-status', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    startupUpdateStatus = await res.json();
+  } catch (err) {
+    startupUpdateStatus = null;
+    console.warn('loadStartupUpdateStatus error:', err);
+  }
+  renderStartupUpdateNotice();
+}
 
 function showCanvasGate(show) {
   document.body.classList.toggle('gate-open', show);
@@ -9446,6 +9520,7 @@ function setGateMode(mode) {
     toggle.title         = '回收站';
   }
   // Render the now-empty list immediately so the user sees the mode actually switched.
+  renderStartupUpdateNotice();
   renderCanvasGate();
 }
 
@@ -9661,6 +9736,7 @@ function renderCanvasGate() {
   const count = document.getElementById('gate-count');
   const items = (gateMode === 'trash') ? canvasTrashV2 : canvasListV2;
 
+  renderStartupUpdateNotice();
   list.innerHTML = '';
   empty.innerHTML = '';
 
@@ -10178,6 +10254,7 @@ function restoreCanvasV2(data) {
 applyTransform();
 setGateMode('normal');
 showCanvasGate(true);
+loadStartupUpdateStatus();
 loadCanvasListV2();
 loadCatalog('image');
 loadFxRate();

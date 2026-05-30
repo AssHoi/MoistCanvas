@@ -13,6 +13,7 @@ $RequiredItems = @(
     "README.md",
     "README-FIRST.txt",
     "static",
+    "scripts\startup_update.py",
     "data\api_providers.json"
 )
 
@@ -73,6 +74,7 @@ foreach ($Item in $RequiredItems) {
 Copy-CleanFile -SourcePath $InstallBat.FullName -DestinationName $InstallBat.Name
 Copy-CleanFile -SourcePath $RunBat.FullName -DestinationName $RunBat.Name
 Copy-CleanItem -RelativePath "scripts\build_clean_zip.ps1"
+Copy-CleanItem -RelativePath "scripts\startup_update.py"
 
 $ForbiddenPatterns = @(
     "\\.git(\\|$)",

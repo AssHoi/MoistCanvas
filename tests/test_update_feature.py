@@ -150,6 +150,57 @@ def test_endpoints_present_and_safe_default():
         main.GITHUB_REPO = old_repo
 
 
+def test_update_status_endpoint_defaults_without_file(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(main, "UPDATE_STATUS_FILE", str(tmp_path / "missing.json"))
+    client = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
+
+    r = client.get("/api/update-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {
+        "status": "none",
+        "current": main.APP_VERSION,
+        "latest": "",
+        "tag": "",
+        "message": "",
+        "html_url": "",
+        "time": "",
+    }
+
+
+def test_update_status_endpoint_sanitizes_status_file(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import json as _json
+
+    status_file = tmp_path / "update_status.json"
+    status_file.write_text(_json.dumps({
+        "status": "failed",
+        "current": "1.0.1",
+        "latest": "1.0.2",
+        "tag": "v1.0.2",
+        "message": "boom",
+        "html_url": "https://github.com/AssHoi/MoistCanvas/releases/tag/v1.0.2",
+        "time": "2026-05-30T00:00:00Z",
+        "secret": "do-not-return",
+    }), encoding="utf-8")
+    monkeypatch.setattr(main, "UPDATE_STATUS_FILE", str(status_file))
+    client = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
+
+    r = client.get("/api/update-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "failed"
+    assert body["current"] == "1.0.1"
+    assert body["latest"] == "1.0.2"
+    assert body["tag"] == "v1.0.2"
+    assert body["message"] == "boom"
+    assert body["html_url"].startswith("https://github.com/AssHoi/MoistCanvas/releases/")
+    assert body["time"] == "2026-05-30T00:00:00Z"
+    assert "secret" not in body
+
+
 # ── Review fix #2: locality (peer IP) + CSRF guard ───────────────────────────
 class _Client:
     def __init__(self, host): self.host = host
@@ -439,6 +490,8 @@ if __name__ == "__main__":
     test_skip_path_protects_user_data_and_keeps_code()
     _run_with_tmp(test_overlay_preserves_user_data, needs_mp=True)
     test_endpoints_present_and_safe_default()
+    _run_with_tmp(test_update_status_endpoint_defaults_without_file, needs_mp=True)
+    _run_with_tmp(test_update_status_endpoint_sanitizes_status_file, needs_mp=True)
     test_is_loopback_ip()
     test_assert_same_origin()
     test_apply_update_rejects_cross_site_origin()

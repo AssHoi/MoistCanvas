@@ -33,6 +33,13 @@ if not exist "main.py" (
     exit /b 1
 )
 
+echo Checking for updates...
+"%PY_EXE%" scripts\startup_update.py
+if errorlevel 1 (
+    echo [WARN] Startup update failed; continuing with the current version.
+)
+echo.
+
 echo Starting MoistCanvas server...
 echo URL: http://127.0.0.1:6767/
 echo Close this window to stop the server.

@@ -146,12 +146,13 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
 # which is gitignored and on the same volume as the install (fast local copies).
 UPDATE_DIR = os.path.join(BASE_DIR, "runtime", "_update")
+UPDATE_STATUS_FILE = os.path.join(BASE_DIR, "runtime", "update_status.json")
 UPDATE_LOCK = Lock()
 _UPDATE_IN_PROGRESS = {"value": False}
 # Hard limits for the downloaded/extracted update package. The GitHub source
@@ -2831,6 +2832,29 @@ def _release_summary(release):
     }
 
 
+def _default_update_status():
+    return {
+        "status": "none",
+        "current": APP_VERSION,
+        "latest": "",
+        "tag": "",
+        "message": "",
+        "html_url": "",
+        "time": "",
+    }
+
+
+def _public_update_status(data=None):
+    status = _default_update_status()
+    if isinstance(data, dict):
+        for key in status.keys():
+            if key in data:
+                status[key] = str(data.get(key) or "")
+    if not status["current"]:
+        status["current"] = APP_VERSION
+    return status
+
+
 @app.get("/api/app-version")
 async def app_version():
     return {
@@ -2838,6 +2862,17 @@ async def app_version():
         "repo": GITHUB_REPO,
         "configured": _update_configured(),
     }
+
+
+@app.get("/api/update-status")
+async def update_status():
+    """Expose bounded startup-update status for the canvas gate notice."""
+    try:
+        with open(UPDATE_STATUS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    return _public_update_status(data)
 
 
 @app.get("/api/check-update")
