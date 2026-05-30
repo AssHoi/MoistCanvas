@@ -146,7 +146,7 @@ CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
 APP_VERSION = "1.0.0"
-GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "your-github-username/MoistCanvas").strip().strip("/")
+GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
 # which is gitignored and on the same volume as the install (fast local copies).
