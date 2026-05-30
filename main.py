@@ -128,6 +128,7 @@ FX_RATE_CACHE_FILE = os.path.join(DATA_DIR, "fx_rate_cache.json")
 FX_RATE_TTL = 24 * 3600
 PRICING_CACHE_TTL = 12 * 3600
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+APP_PORT = 6767
 
 # ─── In-app auto-update (GitHub Releases) ─────────────────────────────────────
 # APP_VERSION is the single source of truth for "what version am I". It travels
@@ -2989,7 +2990,7 @@ def _assert_same_origin(request):
          This is the actual connection address from the ASGI scope; unlike the
          Host / Origin / Referer headers it cannot be forged by the client. The
          server binds 0.0.0.0, so without this a LAN machine could call these
-         endpoints while spoofing `Host: localhost:3000`. Gating on the peer IP
+         endpoints while spoofing `Host: localhost:6767`. Gating on the peer IP
          (not the Host header) closes that bypass — and it must gate ALL calls,
          because the Origin check below is itself defeatable by a non-browser
          client that simply sends a matching Origin header.
@@ -3196,7 +3197,7 @@ async def apply_update(request: Request):
 @app.post("/api/restart-app")
 async def restart_app(request: Request):
     """Relaunch the run script in a fresh window, then exit this process. A short
-    delay in the relauncher lets port 3000 free up before the new server binds.
+    delay in the relauncher lets the app port free up before the new server binds.
     Windows-only auto-restart; other platforms just report unsupported so the
     user restarts manually."""
     # CSRF guard — a web page must not be able to kill/restart the local server.
@@ -3253,4 +3254,4 @@ async def restart_app(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3000)
+    uvicorn.run(app, host="0.0.0.0", port=APP_PORT)
