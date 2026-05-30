@@ -19,6 +19,10 @@ sys.path.insert(0, str(ROOT))
 import main  # noqa: E402
 
 
+def test_app_port_is_6767():
+    assert main.APP_PORT == 6767
+
+
 def test_is_newer():
     cases = [
         ("v1.1.0", "1.0.0", True),
@@ -121,24 +125,29 @@ def test_endpoints_present_and_safe_default():
     from fastapi.testclient import TestClient
     # Loopback peer + Host so a no-Origin local client (curl on the same machine)
     # passes the locality/CSRF guard.
-    client = TestClient(main.app, base_url="http://127.0.0.1:3000", client=("127.0.0.1", 5555))
+    client = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
 
-    # app-version always works; default repo is the unconfigured placeholder.
+    # app-version always works and reports the configured repository.
     r = client.get("/api/app-version")
     assert r.status_code == 200
     body = r.json()
     assert body["version"] == main.APP_VERSION
-    assert body["configured"] is False  # placeholder repo
+    assert body["repo"] == main.GITHUB_REPO
 
-    # check-update on an unconfigured repo must fail clearly (not 500-crash).
-    r = client.get("/api/check-update")
-    assert r.status_code == 400
-    assert "GITHUB_REPO" in r.json()["detail"] or "仓库" in r.json()["detail"]
+    old_repo = main.GITHUB_REPO
+    main.GITHUB_REPO = "your-github-username/MoistCanvas"
+    try:
+        # check-update on an unconfigured repo must fail clearly (not 500-crash).
+        r = client.get("/api/check-update")
+        assert r.status_code == 400
+        assert "GITHUB_REPO" in r.json()["detail"] or "仓库" in r.json()["detail"]
 
-    # apply-update from a local (loopback) no-Origin client passes the CSRF
-    # guard, then is rejected cleanly because the repo is unconfigured.
-    r = client.post("/api/apply-update")
-    assert r.status_code == 400
+        # apply-update from a local (loopback) no-Origin client passes the CSRF
+        # guard, then is rejected cleanly because the repo is unconfigured.
+        r = client.post("/api/apply-update")
+        assert r.status_code == 400
+    finally:
+        main.GITHUB_REPO = old_repo
 
 
 # ── Review fix #2: locality (peer IP) + CSRF guard ───────────────────────────
@@ -174,42 +183,47 @@ def test_is_loopback_ip():
 
 def test_assert_same_origin():
     # (A) Local browser, malicious page: peer is loopback but Origin=evil → 403.
-    _expect_403(_FakeReq({"host": "127.0.0.1:3000", "origin": "http://evil.com"}, peer="127.0.0.1"))
+    _expect_403(_FakeReq({"host": "127.0.0.1:6767", "origin": "http://evil.com"}, peer="127.0.0.1"))
 
     # (B) Local browser, same-origin → passes.
-    main._assert_same_origin(_FakeReq({"host": "127.0.0.1:3000", "origin": "http://127.0.0.1:3000"}, peer="127.0.0.1"))
-    main._assert_same_origin(_FakeReq({"host": "localhost:3000", "origin": "http://localhost:3000"}, peer="::1"))
+    main._assert_same_origin(_FakeReq({"host": "127.0.0.1:6767", "origin": "http://127.0.0.1:6767"}, peer="127.0.0.1"))
+    main._assert_same_origin(_FakeReq({"host": "localhost:6767", "origin": "http://localhost:6767"}, peer="::1"))
     # Referer fallback when Origin missing.
-    main._assert_same_origin(_FakeReq({"host": "127.0.0.1:3000", "referer": "http://127.0.0.1:3000/static/api-settings.html"}, peer="127.0.0.1"))
+    main._assert_same_origin(_FakeReq({"host": "127.0.0.1:6767", "referer": "http://127.0.0.1:6767/static/api-settings.html"}, peer="127.0.0.1"))
     # Local non-browser client (curl on this machine, no Origin) → passes.
-    main._assert_same_origin(_FakeReq({"host": "127.0.0.1:3000"}, peer="127.0.0.1"))
+    main._assert_same_origin(_FakeReq({"host": "127.0.0.1:6767"}, peer="127.0.0.1"))
 
     # (C) The KEY fix: a LAN machine cannot bypass by spoofing the Host header —
     # the real peer IP is what's checked. Even with a perfectly forged
     # Host+Origin pair, a non-loopback peer is rejected.
-    _expect_403(_FakeReq({"host": "localhost:3000", "origin": "http://localhost:3000"}, peer="192.168.1.50"))
-    _expect_403(_FakeReq({"host": "localhost:3000"}, peer="192.168.1.50"))
+    _expect_403(_FakeReq({"host": "localhost:6767", "origin": "http://localhost:6767"}, peer="192.168.1.50"))
+    _expect_403(_FakeReq({"host": "localhost:6767"}, peer="192.168.1.50"))
     # (D) LAN browser to the server's LAN IP → also rejected (intentional: these
     # endpoints are strictly local).
-    _expect_403(_FakeReq({"host": "192.168.1.5:3000", "origin": "http://192.168.1.5:3000"}, peer="192.168.1.9"))
+    _expect_403(_FakeReq({"host": "192.168.1.5:6767", "origin": "http://192.168.1.5:6767"}, peer="192.168.1.9"))
 
 
 def test_apply_update_rejects_cross_site_origin():
     from fastapi.testclient import TestClient
     # Local browser peer, but evil cross-site Origin → 403 at the guard, before
     # any GitHub/download work.
-    local = TestClient(main.app, base_url="http://127.0.0.1:3000", client=("127.0.0.1", 5555))
+    local = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
     r = local.post("/api/apply-update", headers={"Origin": "http://evil.com"})
     assert r.status_code == 403
     r = local.post("/api/restart-app", headers={"Origin": "http://evil.com"})
     assert r.status_code == 403
     # Matching origin from loopback passes the guard (then 400, repo unconfigured).
-    r = local.post("/api/apply-update", headers={"Origin": "http://127.0.0.1:3000"})
-    assert r.status_code == 400
+    old_repo = main.GITHUB_REPO
+    main.GITHUB_REPO = "your-github-username/MoistCanvas"
+    try:
+        r = local.post("/api/apply-update", headers={"Origin": "http://127.0.0.1:6767"})
+        assert r.status_code == 400
+    finally:
+        main.GITHUB_REPO = old_repo
 
     # Non-loopback peer (LAN/remote) is rejected outright, regardless of headers.
-    remote = TestClient(main.app, base_url="http://127.0.0.1:3000", client=("192.168.1.50", 5555))
-    r = remote.post("/api/apply-update", headers={"Origin": "http://127.0.0.1:3000"})
+    remote = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("192.168.1.50", 5555))
+    r = remote.post("/api/apply-update", headers={"Origin": "http://127.0.0.1:6767"})
     assert r.status_code == 403
     r = remote.post("/api/restart-app")
     assert r.status_code == 403
@@ -420,6 +434,7 @@ if __name__ == "__main__":
             else:
                 fn(Path(d))
 
+    test_app_port_is_6767()
     test_is_newer()
     test_skip_path_protects_user_data_and_keeps_code()
     _run_with_tmp(test_overlay_preserves_user_data, needs_mp=True)
@@ -435,3 +450,4 @@ if __name__ == "__main__":
     _run_with_tmp(test_overlay_rolls_back_on_write_failure, needs_mp=True)
     _run_with_tmp(test_overlay_destination_never_corrupted_on_midwrite_failure, needs_mp=True)
     print("OK")
+

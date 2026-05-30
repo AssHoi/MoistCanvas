@@ -34,11 +34,11 @@ if not exist "main.py" (
 )
 
 echo Starting MoistCanvas server...
-echo URL: http://127.0.0.1:3000/
+echo URL: http://127.0.0.1:6767/
 echo Close this window to stop the server.
 echo.
 
-start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://127.0.0.1:3000/"
+start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://127.0.0.1:6767/"
 "%PY_EXE%" main.py
 
 echo.

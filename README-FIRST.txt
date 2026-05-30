@@ -5,7 +5,7 @@ How to use on Windows:
 2. Double-click 安装依赖.bat.
 3. Wait for it to download portable Python and install dependencies.
 4. Double-click 运行文件.bat.
-5. The browser will open http://127.0.0.1:3000/.
+5. The browser will open http://127.0.0.1:6767/.
 6. On first use, open the API settings page and enter your own API Key.
 
 Notes:
