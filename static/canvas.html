@@ -1550,6 +1550,27 @@
       word-break: break-word;
       white-space: pre-wrap;
     }
+    .chat-bubble,
+    .chat-prompt-text,
+    .chat-summary,
+    .chat-task-info,
+    .req-log-panel,
+    .req-log-title,
+    .req-log-pre,
+    .conv-error,
+    .msg-error,
+    .bubble-error,
+    #status-msg,
+    #save-status,
+    .c-node h1,
+    .c-node h2,
+    .c-node h3,
+    .c-node p,
+    .c-node pre,
+    .c-node code {
+      -webkit-user-select: text;
+      user-select: text;
+    }
     .chat-msg.user .chat-bubble {
       background: #f7f4ed;
       color: var(--text);
@@ -3752,6 +3773,7 @@ document.addEventListener('keydown', (e) => {
   if (!mod) return;
   if (isTextInputTarget(e.target)) return;
   const k = (e.key || '').toLowerCase();
+  if (k === 'c' && hasNativeTextSelection()) return;
   if (k === 'c') {
     e.preventDefault();
     copySelectedNodes();
@@ -4110,6 +4132,11 @@ function clearSelection() {
 function isTextInputTarget(target) {
   const tag = target && target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target && target.isContentEditable);
+}
+
+function hasNativeTextSelection() {
+  const sel = window.getSelection && window.getSelection();
+  return !!(sel && !sel.isCollapsed && String(sel.toString() || '').length > 0);
 }
 
 function deleteSelectedNodes() {

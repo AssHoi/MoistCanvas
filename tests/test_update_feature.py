@@ -4,7 +4,7 @@ Covers:
 - Version comparison (_is_newer) across normal/edge cases.
 - _skip_path_for_update protects every user-data path and keeps every code path.
 - _overlay_code_files actually preserves user data when run against a synthetic
-  install dir (monkeypatched BASE_DIR — never touches the real install).
+  install dir (monkeypatched BASE_DIR -- never touches the real install).
 - The HTTP endpoints exist and behave sanely with the default (unconfigured) repo.
 """
 
@@ -32,7 +32,7 @@ def test_is_newer():
         ("v2.0.0", "1.9.9", True),
         ("v1.0.10", "1.0.9", True),     # numeric, not lexical
         ("1.0.0-beta", "1.0.0", False), # suffix dropped
-        ("garbage", "1.0.0", False),    # unparseable → not newer
+        ("garbage", "1.0.0", False),    # unparseable -> not newer
         ("", "1.0.0", False),
     ]
     for latest, cur, exp in cases:
@@ -62,7 +62,7 @@ def test_skip_path_protects_user_data_and_keeps_code():
         "static/i18n.js", "static/theme.js",
         "requirements.txt", "README.md", "README-FIRST.txt",
         "scripts/build_clean_zip.ps1",
-        "data",  # bare top dir name still skipped (it's protected) — guarded below
+        "data",  # bare top dir name still skipped (it's protected) -- guarded below
     ]
     # main.py and static/* must be writable; data (dir) is protected.
     for p in code[:-1]:
@@ -98,7 +98,7 @@ def test_overlay_preserves_user_data(tmp_path, monkeypatch):
     (install / "data" / "canvases_v2" / "mycanvas.json").write_text('{"mine":1}', encoding="utf-8")
 
     monkeypatch.setattr(main, "BASE_DIR", str(install))
-    monkeypatch.setattr(main, "UPDATE_DIR", str(tmp_path / "upd"))  # backups → tmp
+    monkeypatch.setattr(main, "UPDATE_DIR", str(tmp_path / "upd"))  # backups -> tmp
     written = main._overlay_code_files(str(src))
 
     # Code files updated.
@@ -106,7 +106,7 @@ def test_overlay_preserves_user_data(tmp_path, monkeypatch):
     assert (install / "static" / "canvas.html").read_text(encoding="utf-8") == "NEW_CANVAS\n"
     assert (install / "requirements.txt").read_text(encoding="utf-8") == "fastapi\n"
 
-    # User secrets / data PRESERVED — never overwritten by the archive copies.
+    # User secrets / data PRESERVED -- never overwritten by the archive copies.
     assert (install / "API" / ".env").read_text(encoding="utf-8") == "COMFLY_API_KEY=USER_SECRET\n"
     assert (install / "output" / "keep.png").read_text(encoding="utf-8") == "user-image"
     assert (install / "data" / "canvases_v2" / "mycanvas.json").read_text(encoding="utf-8") == '{"mine":1}'
@@ -201,7 +201,7 @@ def test_update_status_endpoint_sanitizes_status_file(tmp_path, monkeypatch):
     assert "secret" not in body
 
 
-# ── Review fix #2: locality (peer IP) + CSRF guard ───────────────────────────
+# -- Review fix #2: locality (peer IP) + CSRF guard ---------------------------
 class _Client:
     def __init__(self, host): self.host = host
 
@@ -233,30 +233,30 @@ def test_is_loopback_ip():
 
 
 def test_assert_same_origin():
-    # (A) Local browser, malicious page: peer is loopback but Origin=evil → 403.
+    # (A) Local browser, malicious page: peer is loopback but Origin=evil -> 403.
     _expect_403(_FakeReq({"host": "127.0.0.1:6767", "origin": "http://evil.com"}, peer="127.0.0.1"))
 
-    # (B) Local browser, same-origin → passes.
+    # (B) Local browser, same-origin -> passes.
     main._assert_same_origin(_FakeReq({"host": "127.0.0.1:6767", "origin": "http://127.0.0.1:6767"}, peer="127.0.0.1"))
     main._assert_same_origin(_FakeReq({"host": "localhost:6767", "origin": "http://localhost:6767"}, peer="::1"))
     # Referer fallback when Origin missing.
     main._assert_same_origin(_FakeReq({"host": "127.0.0.1:6767", "referer": "http://127.0.0.1:6767/static/api-settings.html"}, peer="127.0.0.1"))
-    # Local non-browser client (curl on this machine, no Origin) → passes.
+    # Local non-browser client (curl on this machine, no Origin) -> passes.
     main._assert_same_origin(_FakeReq({"host": "127.0.0.1:6767"}, peer="127.0.0.1"))
 
-    # (C) The KEY fix: a LAN machine cannot bypass by spoofing the Host header —
+    # (C) The KEY fix: a LAN machine cannot bypass by spoofing the Host header --
     # the real peer IP is what's checked. Even with a perfectly forged
     # Host+Origin pair, a non-loopback peer is rejected.
     _expect_403(_FakeReq({"host": "localhost:6767", "origin": "http://localhost:6767"}, peer="192.168.1.50"))
     _expect_403(_FakeReq({"host": "localhost:6767"}, peer="192.168.1.50"))
-    # (D) LAN browser to the server's LAN IP → also rejected (intentional: these
+    # (D) LAN browser to the server's LAN IP -> also rejected (intentional: these
     # endpoints are strictly local).
     _expect_403(_FakeReq({"host": "192.168.1.5:6767", "origin": "http://192.168.1.5:6767"}, peer="192.168.1.9"))
 
 
 def test_apply_update_rejects_cross_site_origin():
     from fastapi.testclient import TestClient
-    # Local browser peer, but evil cross-site Origin → 403 at the guard, before
+    # Local browser peer, but evil cross-site Origin -> 403 at the guard, before
     # any GitHub/download work.
     local = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
     r = local.post("/api/apply-update", headers={"Origin": "http://evil.com"})
@@ -280,7 +280,7 @@ def test_apply_update_rejects_cross_site_origin():
     assert r.status_code == 403
 
 
-# ── Review fix #3: safe extraction (zip-slip + caps) ─────────────────────────
+# -- Review fix #3: safe extraction (zip-slip + caps) -------------------------
 def test_safe_extract_rejects_zip_slip(tmp_path):
     import zipfile as _zip
     bad = tmp_path / "bad.zip"
@@ -311,7 +311,7 @@ def test_safe_extract_normal_ok(tmp_path):
     assert (dest / "pkg" / "static" / "x.html").exists()
 
 
-# ── Review fix #1: deps-first, abort-on-failure (no "new code + old deps") ────
+# -- Review fix #1: deps-first, abort-on-failure (no "new code + old deps") ----
 def _make_release_tree(tmp_path, req_text):
     src = tmp_path / "src"
     (src / "static").mkdir(parents=True)
@@ -331,7 +331,7 @@ def _make_install(tmp_path, req_text):
 
 
 def test_deps_failure_aborts_without_touching_code(tmp_path, monkeypatch):
-    # New requirements differ → pip will run; force it to FAIL.
+    # New requirements differ -> pip will run; force it to FAIL.
     src = _make_release_tree(tmp_path, "fastapi\nnew-dep\n")
     inst = _make_install(tmp_path, "fastapi\n")
     monkeypatch.setattr(main, "BASE_DIR", str(inst))
@@ -345,7 +345,7 @@ def test_deps_failure_aborts_without_touching_code(tmp_path, monkeypatch):
         assert e.status_code == 502
         assert "依赖安装失败" in e.detail
     assert raised, "deps failure must raise"
-    # CRITICAL: code was NOT swapped — old main.py is intact.
+    # CRITICAL: code was NOT swapped -- old main.py is intact.
     assert (inst / "main.py").read_text(encoding="utf-8") == "OLD_MAIN\n"
     assert (inst / "static" / "canvas.html").read_text(encoding="utf-8") == "OLD_CANVAS\n"
 
@@ -368,7 +368,7 @@ def test_deps_success_then_code_overlaid(tmp_path, monkeypatch):
 
 
 def test_no_dep_change_skips_pip(tmp_path, monkeypatch):
-    # Identical requirements → pip must NOT run, code still overlaid.
+    # Identical requirements -> pip must NOT run, code still overlaid.
     src = _make_release_tree(tmp_path, "fastapi\n")
     inst = _make_install(tmp_path, "fastapi\n")
     monkeypatch.setattr(main, "BASE_DIR", str(inst))
@@ -381,7 +381,7 @@ def test_no_dep_change_skips_pip(tmp_path, monkeypatch):
     assert (inst / "main.py").read_text(encoding="utf-8") == "NEW_MAIN\n"
 
 
-# ── Review fix (P2): atomic overlay with backup + rollback ───────────────────
+# -- Review fix (P2): atomic overlay with backup + rollback -------------------
 def test_overlay_rolls_back_on_write_failure(tmp_path, monkeypatch):
     # Release tree: an existing file (main.py) plus a NEW file (static/BOOM.html)
     # whose copy will fail mid-overlay.
@@ -392,7 +392,7 @@ def test_overlay_rolls_back_on_write_failure(tmp_path, monkeypatch):
 
     inst = tmp_path / "install"
     (inst / "static").mkdir(parents=True)
-    (inst / "main.py").write_text("OLD_MAIN\n", encoding="utf-8")  # exists → backed up
+    (inst / "main.py").write_text("OLD_MAIN\n", encoding="utf-8")  # exists -> backed up
 
     monkeypatch.setattr(main, "BASE_DIR", str(inst))
     monkeypatch.setattr(main, "UPDATE_DIR", str(tmp_path / "upd"))
@@ -437,7 +437,7 @@ def test_overlay_destination_never_corrupted_on_midwrite_failure(tmp_path, monke
     real_copy2 = main.shutil.copy2
     def flaky_copy2(s, d, *a, **k):
         # Fail while writing the STAGING temp file, after leaving partial bytes
-        # in it — models a disk-full mid-write. Backup copies (dst not .tmp)
+        # in it -- models a disk-full mid-write. Backup copies (dst not .tmp)
         # still succeed.
         if str(d).endswith(".tmp"):
             with open(d, "wb") as f:
@@ -454,7 +454,7 @@ def test_overlay_destination_never_corrupted_on_midwrite_failure(tmp_path, monke
         assert e.status_code == 500
     assert raised, "mid-write failure must raise"
 
-    # CRITICAL: the real destination is the intact OLD file — never truncated,
+    # CRITICAL: the real destination is the intact OLD file -- never truncated,
     # never filled with the partial garbage that went to the temp.
     assert (inst / "main.py").read_text(encoding="utf-8") == "OLD_MAIN_INTACT\n"
     # No staging temp left behind in the install dir.
