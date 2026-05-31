@@ -67,6 +67,55 @@ class ApimartNanoBananaCatalogTests(unittest.TestCase):
         self.assertTrue(main._skip_path_for_update("安装依赖.bat"))
         self.assertTrue(main._skip_path_for_update("nested/script.bat"))
 
+    def test_omni_flash_ext_video_model_is_in_fallback_catalog(self):
+        video_models = {item["id"]: item for item in main.APIMART_FALLBACK_CATALOG["video"]}
+
+        self.assertIn("Omni-Flash-Ext", video_models)
+        omni = video_models["Omni-Flash-Ext"]
+        self.assertEqual(omni["label"], "Omni Flash Ext")
+        self.assertEqual(omni["params"]["duration"]["options"], [4, 6, 8, 10])
+        self.assertEqual(omni["params"]["duration"]["default"], 6)
+        self.assertEqual(omni["params"]["resolution"]["options"], ["720p", "1080p", "4k"])
+        self.assertEqual(omni["params"]["size"]["options"], ["16:9", "9:16"])
+
+    def test_video_pricing_supports_resolution_duration_prices(self):
+        raw = {
+            "billing_type": "resolution_duration",
+            "resolution_duration_prices": {
+                "720P-4s": 0.1875,
+                "720P-6s": 0.2125,
+                "4K-10s": 0.5,
+            },
+            "video_ref_per_second_prices": {
+                "720P": 0.042,
+                "4K": 0.08,
+            },
+        }
+
+        pricing = main._parse_video_pricing(raw)
+
+        self.assertIsNotNone(pricing)
+        self.assertEqual(pricing["bill_by"], "per_video_duration")
+        rules = {
+            (rule["resolution"], rule["duration"]): rule["per_video"]
+            for rule in pricing["rules"]
+        }
+        self.assertEqual(rules[("720p", 4)], 0.1875)
+        self.assertEqual(rules[("720p", 6)], 0.2125)
+        self.assertEqual(rules[("4k", 10)], 0.5)
+        ref_rules = {
+            rule["resolution"]: rule["input_per_second"]
+            for rule in pricing["rules"]
+            if "input_per_second" in rule
+        }
+        self.assertEqual(ref_rules["720p"], 0.042)
+        self.assertEqual(ref_rules["4k"], 0.08)
+
+    def test_canvas_price_estimate_supports_per_video_duration(self):
+        html = (ROOT / "static" / "canvas.html").read_text(encoding="utf-8")
+
+        self.assertIn("pricing.bill_by === 'per_video_duration'", html)
+
 
 if __name__ == "__main__":
     unittest.main()

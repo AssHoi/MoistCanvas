@@ -122,8 +122,8 @@ MODEL_CATALOG_CACHE_FILE = os.path.join(DATA_DIR, "model_catalog_cache.json")
 MODEL_CATALOG_CACHE_TTL = 12 * 3600
 # Bump this whenever APIMART_FALLBACK_CATALOG schema changes (params / pricing structure).
 # Old cache entries with a different version are silently discarded and rebuilt.
-MODEL_CATALOG_CACHE_VERSION = 6
-PRICING_CACHE_VERSION = 2  # bump when parse logic changes to invalidate stale pricing entries
+MODEL_CATALOG_CACHE_VERSION = 7
+PRICING_CACHE_VERSION = 3  # bump when parse logic changes to invalidate stale pricing entries
 FX_RATE_CACHE_FILE = os.path.join(DATA_DIR, "fx_rate_cache.json")
 FX_RATE_TTL = 24 * 3600
 PRICING_CACHE_TTL = 12 * 3600
@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -234,6 +234,17 @@ def _img_pricing(res_rules: list) -> dict:
 def _vid_pricing(res_rules: list) -> dict:
     """Build video pricing block. res_rules: [{"resolution": "480p", "per_second": None}, ...]"""
     return {"currency": "USD", "bill_by": "per_second", "rules": res_rules}
+
+def _vid_duration_pricing(res_duration_rules: list) -> dict:
+    """Build video pricing block for models priced by resolution + duration."""
+    return {"currency": "USD", "bill_by": "per_video_duration", "rules": res_duration_rules}
+
+def _omni_flash_ext_params() -> dict:
+    return {
+        "duration":   {"type": "select", "label": "视频时长", "title": "生成视频的时长，单位为秒；使用参考视频时上游会忽略时长", "options": [4,6,8,10], "default": 6},
+        "size":       {"type": "select", "label": "画面比例", "title": "视频宽高比", "options": ["16:9","9:16"], "default": "16:9"},
+        "resolution": {"type": "select", "label": "清晰度", "title": "视频输出清晰度", "options": ["720p","1080p","4k"], "default": "720p"},
+    }
 
 def _nano_banana_pro_params() -> dict:
     return {
@@ -379,6 +390,26 @@ APIMART_FALLBACK_CATALOG: Dict[str, list] = {
             ]),
             "source": "fallback",
         },
+        {
+            "id": "Omni-Flash-Ext",
+            "label": "Omni Flash Ext",
+            "params": _omni_flash_ext_params(),
+            "pricing": _vid_duration_pricing([
+                {"resolution": "720p",  "duration": 4,  "per_video": None},
+                {"resolution": "720p",  "duration": 6,  "per_video": None},
+                {"resolution": "720p",  "duration": 8,  "per_video": None},
+                {"resolution": "720p",  "duration": 10, "per_video": None},
+                {"resolution": "1080p", "duration": 4,  "per_video": None},
+                {"resolution": "1080p", "duration": 6,  "per_video": None},
+                {"resolution": "1080p", "duration": 8,  "per_video": None},
+                {"resolution": "1080p", "duration": 10, "per_video": None},
+                {"resolution": "4k",    "duration": 4,  "per_video": None},
+                {"resolution": "4k",    "duration": 6,  "per_video": None},
+                {"resolution": "4k",    "duration": 8,  "per_video": None},
+                {"resolution": "4k",    "duration": 10, "per_video": None},
+            ]),
+            "source": "fallback",
+        },
     ],
 }
 
@@ -412,7 +443,7 @@ def classify_model_kind(model_id: str) -> str:
         return "video"
 
     video_keys = [
-        "veo", "sora", "wan2", "wanx", "kling", "hailuo", "video",
+        "veo", "sora", "wan2", "wanx", "kling", "hailuo", "video", "omni-flash",
         "t2v-", "i2v-", "s2v",
     ]
     if any(k in lc for k in video_keys):
@@ -460,7 +491,7 @@ def default_api_providers():
                 "gemini-3.1-flash-image-preview-official",
             ],
             "chat_models": [],
-            "video_models": ["doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-face", "doubao-seedance-2.0-fast-face"],
+            "video_models": ["doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-face", "doubao-seedance-2.0-fast-face", "Omni-Flash-Ext"],
         },
     ]
 
@@ -487,6 +518,11 @@ def merge_default_api_providers(providers):
                 ])
             if not current_am.get("video_models"):
                 current_am["video_models"] = list(am_default["video_models"])
+            else:
+                current_am["video_models"] = model_list_from_values([
+                    *current_am.get("video_models", []),
+                    *am_default["video_models"],
+                ])
     # ModelScope is intentionally NOT force-injected anymore. If the user has
     # added it manually it is left exactly as configured.
     return merged
@@ -1670,18 +1706,21 @@ async def apimart_canvas_video(payload, provider, client_job_id=""):
         ar = raw_ar if raw_ar in APIMART_VIDEO_SIZES else "16:9"
         size = payload.size if payload.size in APIMART_VIDEO_SIZES else ar
         resolution = payload.resolution or "720p"
+        selected_video_model = selected_model(payload.model, "")
+        is_omni_flash_ext = selected_video_model.strip().lower() == "omni-flash-ext"
         body = {
             "prompt": payload.prompt,
-            "model": selected_model(payload.model, ""),
-            "duration": payload.duration,
+            "model": selected_video_model,
             "size": size,
             "aspect_ratio": ar,
             "resolution": resolution,
         }
+        if not (is_omni_flash_ext and payload.videos):
+            body["duration"] = payload.duration
         if image_urls:
-            body["image_urls"] = image_urls
+            body["image_urls"] = image_urls[:3] if is_omni_flash_ext else image_urls
         if payload.videos:
-            body["video_urls"] = [v for v in payload.videos[:3] if v]
+            body["video_urls"] = [v for v in payload.videos[:1 if is_omni_flash_ext else 3] if v]
         if payload.generate_audio:
             body["generate_audio"] = True
         if payload.return_last_frame:
@@ -2120,7 +2159,32 @@ def _parse_official_image_pricing(raw: dict) -> Optional[dict]:
     return {"currency": "USD", "bill_by": "per_image_size_quality", "source": "apimart-pricing-api", "rules": rules} if rules else None
 
 def _parse_video_pricing(raw: dict) -> Optional[dict]:
-    """Convert resolution_prices (with -input suffix) → per_second + input_per_second rules."""
+    """Convert APIMart video pricing payloads into UI pricing rules."""
+    duration_prices = raw.get("resolution_duration_prices")
+    if duration_prices:
+        input_prices: Dict[str, float] = {}
+        for k, v in (raw.get("video_ref_per_second_prices") or {}).items():
+            if isinstance(v, (int, float)):
+                input_prices[str(k or "").lower()] = float(v)
+        rules = []
+        for k, v in duration_prices.items():
+            if not isinstance(v, (int, float)):
+                continue
+            match = re.match(r"^(.+)-(\d+)s$", str(k or "").strip(), re.IGNORECASE)
+            if not match:
+                continue
+            resolution = match.group(1).lower()
+            duration = int(match.group(2))
+            rule: Dict[str, Any] = {
+                "resolution": resolution,
+                "duration": duration,
+                "per_video": float(v),
+            }
+            if resolution in input_prices:
+                rule["input_per_second"] = input_prices[resolution]
+            rules.append(rule)
+        return {"currency": "USD", "bill_by": "per_video_duration", "source": "apimart-pricing-api", "rules": rules} if rules else None
+
     res_prices = raw.get("resolution_prices")
     if not res_prices:
         return None
@@ -2161,7 +2225,9 @@ async def _get_model_pricing(model_id: str, fallback_pricing: dict) -> dict:
         res_prices = payload.get("resolution_prices") or {}
         if billing_type == "size_quality":
             pricing = _parse_official_image_pricing(payload)
-        elif billing_type == "per_second" or any(k.lower().endswith("-input") for k in res_prices):
+        elif (billing_type in ("per_second", "resolution_duration")
+              or payload.get("resolution_duration_prices")
+              or any(k.lower().endswith("-input") for k in res_prices)):
             pricing = _parse_video_pricing(payload)
         else:
             pricing = _parse_image_pricing(payload, fallback_pricing)

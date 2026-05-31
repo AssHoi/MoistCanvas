@@ -8257,9 +8257,13 @@ function updatePriceEstimate() {
   if (fxRate) txt += ' / ≈ ¥' + (usd * fxRate).toFixed(2);
 
   // Video: note that input-video cost is not included in this estimate
-  if (pricing.bill_by === 'per_second') {
+  if (pricing.bill_by === 'per_second' || pricing.bill_by === 'per_video_duration') {
     const resolution = (paramVals.resolution || '').toLowerCase();
-    const rule = (pricing.rules || []).find(r => r.resolution === resolution);
+    const duration = parseInt(paramVals.duration) || 5;
+    const rule = (pricing.rules || []).find(r =>
+      r.resolution === resolution &&
+      (pricing.bill_by !== 'per_video_duration' || parseInt(r.duration) === duration)
+    );
     if (rule && rule.input_per_second) txt += '（不含参考视频输入费用）';
   }
 
@@ -8294,6 +8298,13 @@ function _computePrice(modelDef, paramVals) {
     const rule = rules.find(r => r.resolution === resolution);
     if (!rule || rule.per_second == null) return null;
     return rule.per_second * duration;
+  }
+
+  if (pricing.bill_by === 'per_video_duration') {
+    const duration = parseInt(paramVals.duration) || 5;
+    const rule = rules.find(r => r.resolution === resolution && parseInt(r.duration) === duration);
+    if (!rule || rule.per_video == null) return null;
+    return rule.per_video;
   }
 
   return null;
