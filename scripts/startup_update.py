@@ -26,10 +26,81 @@ RUNTIME_DIR = os.path.join(BASE_DIR, "runtime")
 UPDATE_DIR = os.path.join(RUNTIME_DIR, "_startup_update")
 UPDATE_STATUS_FILE = os.path.join(RUNTIME_DIR, "update_status.json")
 _LAST_RELEASE_INFO = {}
+STARTUP_RELEASES_PER_PAGE = 20
 
 
 def _now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _github_headers(user_agent="MoistCanvas-Startup-Updater"):
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _parse_version_tuple(tag):
+    parsed = main._parse_version(tag)
+    if not parsed:
+        return ()
+    return parsed + (0,) * (4 - len(parsed))
+
+
+def _select_latest_release(releases):
+    candidates = [
+        rel for rel in releases
+        if isinstance(rel, dict)
+        and not rel.get("draft")
+        and not rel.get("prerelease")
+        and _parse_version_tuple(rel.get("tag_name") or "")
+    ]
+    if not candidates:
+        raise RuntimeError("No published versioned GitHub releases were found.")
+    return max(candidates, key=lambda rel: _parse_version_tuple(rel.get("tag_name") or ""))
+
+
+async def _github_release_candidates():
+    if not main._update_configured():
+        raise main.HTTPException(
+            status_code=400,
+            detail="尚未配置 GitHub 仓库（请设置 GITHUB_REPO 或 MOISTCANVAS_REPO 环境变量）。",
+        )
+    repo = (main.GITHUB_REPO or "").strip().strip("/")
+    api_base = getattr(main, "GITHUB_API_BASE", "https://api.github.com")
+    url = f"{api_base}/repos/{repo}/releases"
+    params = {"per_page": str(STARTUP_RELEASES_PER_PAGE), "_": str(int(time.time()))}
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(url, params=params, headers=_github_headers())
+    except Exception as exc:
+        raise main.HTTPException(status_code=502, detail=f"无法连接 GitHub：{exc}")
+    if resp.status_code == 404:
+        raise main.HTTPException(status_code=404, detail="该仓库还没有发布任何 Release。")
+    if resp.status_code == 403 and "rate limit" in resp.text.lower():
+        raise main.HTTPException(status_code=429, detail="GitHub API 速率限制，请稍后再试（或配置 GITHUB_TOKEN）。")
+    if resp.status_code != 200:
+        raise main.HTTPException(status_code=502, detail=f"GitHub 返回 HTTP {resp.status_code}")
+    data = resp.json()
+    if not isinstance(data, list):
+        raise main.HTTPException(status_code=502, detail="GitHub releases 响应格式异常。")
+    return data
+
+
+async def _github_latest_release_fresh():
+    try:
+        return _select_latest_release(await _github_release_candidates())
+    except Exception:
+        # Fallback keeps launch resilient if the releases-list endpoint has a
+        # transient problem. async_main records a failure only if both paths fail.
+        return await main._github_latest_release()
 
 
 def _status_payload(status, **values):
@@ -81,17 +152,9 @@ def _http_error_message(exc):
 
 
 async def _download_zip(zip_url, zip_path):
-    headers = {
-        "User-Agent": "MoistCanvas-Startup-Updater",
-        "Accept": "application/vnd.github+json",
-    }
-    token = os.getenv("GITHUB_TOKEN", "").strip()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
     timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        async with client.stream("GET", zip_url, headers=headers) as resp:
+        async with client.stream("GET", zip_url, headers=_github_headers()) as resp:
             resp.raise_for_status()
             clen = resp.headers.get("content-length")
             if clen and int(clen) > main.MAX_UPDATE_DOWNLOAD_BYTES:
@@ -109,7 +172,7 @@ async def _run_update_check():
     global _LAST_RELEASE_INFO
     _sync_main_paths()
 
-    release = await main._github_latest_release()
+    release = await _github_latest_release_fresh()
     info = main._release_summary(release)
     _LAST_RELEASE_INFO = info
 

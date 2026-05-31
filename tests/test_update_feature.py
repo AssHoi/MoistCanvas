@@ -39,6 +39,20 @@ def test_is_newer():
         assert main._is_newer(latest, cur) is exp, (latest, cur, exp)
 
 
+def test_select_latest_release_uses_highest_stable_semver():
+    releases = [
+        {"tag_name": "v1.0.7", "draft": False, "prerelease": False},
+        {"tag_name": "v1.0.9-beta", "draft": False, "prerelease": True},
+        {"tag_name": "v1.0.8", "draft": False, "prerelease": False},
+        {"tag_name": "notes", "draft": False, "prerelease": False},
+        {"tag_name": "v2.0.0", "draft": True, "prerelease": False},
+    ]
+
+    selected = main._select_latest_release(releases)
+
+    assert selected["tag_name"] == "v1.0.8"
+
+
 def test_skip_path_protects_user_data_and_keeps_code():
     protected = [
         "API/.env", "API\\.env",
@@ -167,6 +181,7 @@ def test_update_status_endpoint_defaults_without_file(tmp_path, monkeypatch):
         "message": "",
         "html_url": "",
         "time": "",
+        "restart_required": "",
     }
 
 
@@ -198,7 +213,96 @@ def test_update_status_endpoint_sanitizes_status_file(tmp_path, monkeypatch):
     assert body["message"] == "boom"
     assert body["html_url"].startswith("https://github.com/AssHoi/MoistCanvas/releases/")
     assert body["time"] == "2026-05-30T00:00:00Z"
+    assert body["restart_required"] == ""
     assert "secret" not in body
+
+
+def test_check_update_reports_pending_restart_without_reoffering_update(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import json as _json
+
+    old_version = main.APP_VERSION
+    status_file = tmp_path / "update_status.json"
+    status_file.write_text(_json.dumps({
+        "status": "success",
+        "current": "1.0.6",
+        "latest": "1.0.8",
+        "tag": "v1.0.8",
+        "message": "Update applied. Restart required.",
+        "html_url": "https://github.com/AssHoi/MoistCanvas/releases/tag/v1.0.8",
+        "restart_required": True,
+    }), encoding="utf-8")
+
+    async def latest_release():
+        return {
+            "tag_name": "v1.0.8",
+            "name": "v1.0.8",
+            "body": "notes",
+            "published_at": "2026-05-30T00:00:00Z",
+            "html_url": "https://github.com/AssHoi/MoistCanvas/releases/tag/v1.0.8",
+            "zipball_url": "https://example.invalid/latest.zip",
+        }
+
+    monkeypatch.setattr(main, "APP_VERSION", "1.0.6")
+    monkeypatch.setattr(main, "UPDATE_STATUS_FILE", str(status_file))
+    monkeypatch.setattr(main, "_github_latest_release", latest_release)
+    client = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
+    try:
+        r = client.get("/api/check-update")
+    finally:
+        main.APP_VERSION = old_version
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_update"] is False
+    assert body["restart_required"] is True
+    assert body["current"] == "1.0.6"
+    assert body["installed"] == "1.0.8"
+    assert body["latest"] == "1.0.8"
+
+
+def test_apply_update_pending_restart_does_not_download_same_latest(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import json as _json
+
+    old_version = main.APP_VERSION
+    status_file = tmp_path / "update_status.json"
+    status_file.write_text(_json.dumps({
+        "status": "success",
+        "current": "1.0.6",
+        "latest": "1.0.8",
+        "tag": "v1.0.8",
+        "restart_required": True,
+    }), encoding="utf-8")
+
+    async def latest_release():
+        return {
+            "tag_name": "v1.0.8",
+            "name": "v1.0.8",
+            "body": "",
+            "published_at": "2026-05-30T00:00:00Z",
+            "html_url": "https://github.com/AssHoi/MoistCanvas/releases/tag/v1.0.8",
+            "zipball_url": "https://example.invalid/latest.zip",
+        }
+
+    def should_not_download(*args, **kwargs):
+        raise AssertionError("already-applied latest should not download again")
+
+    monkeypatch.setattr(main, "APP_VERSION", "1.0.6")
+    monkeypatch.setattr(main, "UPDATE_STATUS_FILE", str(status_file))
+    monkeypatch.setattr(main, "_github_latest_release", latest_release)
+    monkeypatch.setattr(main, "_install_deps_then_overlay", should_not_download)
+    client = TestClient(main.app, base_url="http://127.0.0.1:6767", client=("127.0.0.1", 5555))
+    try:
+        r = client.post("/api/apply-update")
+    finally:
+        main.APP_VERSION = old_version
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["updated"] is False
+    assert body["restart_required"] is True
+    assert body["installed"] == "1.0.8"
 
 
 # -- Review fix #2: locality (peer IP) + CSRF guard ---------------------------
@@ -487,11 +591,14 @@ if __name__ == "__main__":
 
     test_app_port_is_6767()
     test_is_newer()
+    test_select_latest_release_uses_highest_stable_semver()
     test_skip_path_protects_user_data_and_keeps_code()
     _run_with_tmp(test_overlay_preserves_user_data, needs_mp=True)
     test_endpoints_present_and_safe_default()
     _run_with_tmp(test_update_status_endpoint_defaults_without_file, needs_mp=True)
     _run_with_tmp(test_update_status_endpoint_sanitizes_status_file, needs_mp=True)
+    _run_with_tmp(test_check_update_reports_pending_restart_without_reoffering_update, needs_mp=True)
+    _run_with_tmp(test_apply_update_pending_restart_does_not_download_same_latest, needs_mp=True)
     test_is_loopback_ip()
     test_assert_same_origin()
     test_apply_update_rejects_cross_site_origin()
@@ -503,4 +610,3 @@ if __name__ == "__main__":
     _run_with_tmp(test_overlay_rolls_back_on_write_failure, needs_mp=True)
     _run_with_tmp(test_overlay_destination_never_corrupted_on_midwrite_failure, needs_mp=True)
     print("OK")
-

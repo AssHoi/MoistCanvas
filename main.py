@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -2989,23 +2989,51 @@ def _update_configured():
     return bool(repo) and "your-github-username" not in repo and "/" in repo
 
 
+def _select_latest_release(releases):
+    """Pick the highest stable semver release instead of trusting API ordering."""
+    best = None
+    best_version = None
+    if not isinstance(releases, list):
+        return None
+    for item in releases:
+        if not isinstance(item, dict):
+            continue
+        if item.get("draft") or item.get("prerelease"):
+            continue
+        version = _parse_version(item.get("tag_name") or "")
+        if not version:
+            continue
+        if best_version is None or version > best_version:
+            best = item
+            best_version = version
+    return best
+
+
 async def _github_latest_release():
     """Fetch the latest published release. Returns the parsed dict or raises
     HTTPException with a friendly message."""
     if not _update_configured():
         raise HTTPException(status_code=400, detail="尚未配置 GitHub 仓库（请设置 GITHUB_REPO 或 MOISTCANVAS_REPO 环境变量）。")
-    url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases/latest"
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "MoistCanvas-Updater",
         "X-GitHub-Api-Version": "2022-11-28",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
+            releases_url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases?per_page=20"
+            resp = await client.get(releases_url, headers=headers)
+            if resp.status_code == 200:
+                selected = _select_latest_release(resp.json())
+                if selected:
+                    return selected
+            latest_url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases/latest"
+            resp = await client.get(latest_url, headers=headers)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"无法连接 GitHub：{e}")
     if resp.status_code == 404:
@@ -3039,6 +3067,7 @@ def _default_update_status():
         "message": "",
         "html_url": "",
         "time": "",
+        "restart_required": "",
     }
 
 
@@ -3053,6 +3082,39 @@ def _public_update_status(data=None):
     return status
 
 
+def _read_public_update_status():
+    try:
+        with open(UPDATE_STATUS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    return _public_update_status(data)
+
+
+def _write_public_update_status(status, **values):
+    payload = _public_update_status({
+        "status": status,
+        "current": values.pop("current", APP_VERSION),
+        **values,
+    })
+    os.makedirs(os.path.dirname(UPDATE_STATUS_FILE), exist_ok=True)
+    tmp_path = UPDATE_STATUS_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, UPDATE_STATUS_FILE)
+    return payload
+
+
+def _pending_restart_update_status():
+    status = _read_public_update_status()
+    if status.get("status") != "success":
+        return None
+    applied = status.get("latest") or status.get("tag") or ""
+    if not applied:
+        return None
+    return status if _is_newer(applied, APP_VERSION) else None
+
+
 @app.get("/api/app-version")
 async def app_version():
     return {
@@ -3065,12 +3127,7 @@ async def app_version():
 @app.get("/api/update-status")
 async def update_status():
     """Expose bounded startup-update status for the canvas gate notice."""
-    try:
-        with open(UPDATE_STATUS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        data = None
-    return _public_update_status(data)
+    return _read_public_update_status()
 
 
 @app.get("/api/check-update")
@@ -3078,12 +3135,21 @@ async def check_update():
     """Compare APP_VERSION against the latest GitHub release."""
     release = await _github_latest_release()
     info = _release_summary(release)
-    has_update = _is_newer(info["tag"], APP_VERSION)
+    pending = _pending_restart_update_status()
+    applied_version = (pending or {}).get("latest") or ""
+    effective_current = applied_version or APP_VERSION
+    has_update = _is_newer(info["tag"], effective_current)
+    restart_required = bool(pending and not has_update)
     return {
         "current": APP_VERSION,
+        "installed": effective_current,
+        "effective_current": effective_current,
+        "applied_version": applied_version,
         "latest": info["version"],
         "tag": info["tag"],
         "has_update": has_update,
+        "restart_required": restart_required,
+        "update_applied": bool(pending),
         "name": info["name"],
         "notes": info["notes"],
         "published_at": info["published_at"],
@@ -3354,8 +3420,17 @@ async def apply_update(request: Request):
     try:
         release = await _github_latest_release()
         info = _release_summary(release)
-        if not _is_newer(info["tag"], APP_VERSION):
-            return {"ok": True, "updated": False, "message": "已是最新版本。", "current": APP_VERSION}
+        pending = _pending_restart_update_status()
+        effective_current = (pending or {}).get("latest") or APP_VERSION
+        if not _is_newer(info["tag"], effective_current):
+            return {
+                "ok": True,
+                "updated": False,
+                "message": "Update already applied; restart required." if pending else "已是最新版本。",
+                "current": APP_VERSION,
+                "installed": effective_current,
+                "restart_required": bool(pending),
+            }
 
         zip_url = info["zipball_url"]
         if not zip_url:
@@ -3369,7 +3444,12 @@ async def apply_update(request: Request):
         extract_dir = os.path.join(UPDATE_DIR, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
 
-        headers = {"User-Agent": "MoistCanvas-Updater", "Accept": "application/vnd.github+json"}
+        headers = {
+            "User-Agent": "MoistCanvas-Updater",
+            "Accept": "application/vnd.github+json",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
         token = os.getenv("GITHUB_TOKEN", "").strip()
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -3409,6 +3489,18 @@ async def apply_update(request: Request):
         # fails — see _install_deps_then_overlay).
         written, reqs_changed, deps_reinstalled = _install_deps_then_overlay(src_root)
 
+        _write_public_update_status(
+            "success",
+            current=APP_VERSION,
+            latest=info["version"],
+            tag=info["tag"],
+            html_url=info["html_url"],
+            message=(
+                f"Updated {len(written)} files. "
+                f"deps_changed={bool(reqs_changed)} deps_reinstalled={bool(deps_reinstalled)}"
+            ),
+            restart_required=True,
+        )
         return {
             "ok": True,
             "updated": True,

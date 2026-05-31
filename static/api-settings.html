@@ -1019,6 +1019,20 @@
                 const r = await fetch('/api/check-update');
                 const data = await r.json();
                 if(!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+                if(data.restart_required){
+                    _updateLatestTag = data.tag || '';
+                    bar.classList.remove('has-update');
+                    _setUpdState('已更新到 v' + (data.applied_version || data.latest) + '，重启后生效。');
+                    if(applyBtn) applyBtn.style.display = 'none';
+                    const restartBtn = _updEl('updateRestartBtn');
+                    if(restartBtn) restartBtn.style.display = '';
+                    if(ghLink && data.html_url){ ghLink.href = data.html_url; ghLink.style.display = ''; }
+                    if(notes){
+                        notes.style.display = '';
+                        notes.innerHTML = '<div class="update-notes-title">' + escapeHtml(data.name || ('v' + data.latest)) + ' 更新内容</div>' + escapeHtml(data.notes || '（无更新说明）');
+                    }
+                    return;
+                }
                 if(data.has_update){
                     _updateLatestTag = data.tag || '';
                     bar.classList.add('has-update');
@@ -1051,6 +1065,7 @@
                 if(!data.updated){
                     _setUpdState(data.message || '已是最新版本');
                     if(applyBtn){ applyBtn.disabled = false; applyBtn.textContent = '一键更新'; applyBtn.style.display = 'none'; }
+                    if(data.restart_required && restartBtn) restartBtn.style.display = '';
                     return;
                 }
                 let msg = '✅ 更新完成 v' + data.from + ' → v' + data.to + '，重启后生效。';

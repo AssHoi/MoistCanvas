@@ -7,6 +7,7 @@ is allowed to fail, but failure must be recorded and must never block launch.
 import asyncio
 import importlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -56,6 +57,59 @@ def test_no_update_clears_status_and_exits_zero(tmp_path, monkeypatch):
     assert body["current"] == startup_update.APP_VERSION
 
 
+def test_startup_zip_download_bypasses_http_caches(monkeypatch):
+    captured = {}
+
+    class _Stream:
+        headers = {}
+        def raise_for_status(self): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def aiter_bytes(self, _size):
+            if False:
+                yield b""
+
+    class _Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        def stream(self, method, url, headers=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return _Stream()
+
+    monkeypatch.setattr(startup_update.httpx, "AsyncClient", _Client)
+
+    asyncio.run(startup_update._download_zip("https://example.test/update.zip", os.devnull))
+
+    assert captured["headers"]["Cache-Control"] == "no-cache"
+    assert captured["headers"]["Pragma"] == "no-cache"
+
+
+def test_startup_release_selection_uses_highest_semver_tag():
+    releases = [
+        {
+            "tag_name": "v1.0.7",
+            "name": "v1.0.7",
+            "draft": False,
+            "prerelease": False,
+            "zipball_url": "https://example.invalid/107.zip",
+        },
+        {
+            "tag_name": "v1.0.8",
+            "name": "v1.0.8",
+            "draft": False,
+            "prerelease": False,
+            "zipball_url": "https://example.invalid/108.zip",
+        },
+    ]
+
+    selected = startup_update._select_latest_release(releases)
+
+    assert selected["tag_name"] == "v1.0.8"
+
+
 if __name__ == "__main__":
     import tempfile
 
@@ -78,4 +132,6 @@ if __name__ == "__main__":
 
     _run_with_tmp(test_failure_status_is_written_and_exit_code_is_zero)
     _run_with_tmp(test_no_update_clears_status_and_exits_zero)
+    test_startup_zip_download_bypasses_http_caches(_MP())
+    test_startup_release_selection_uses_highest_semver_tag()
     print("OK")
