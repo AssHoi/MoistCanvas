@@ -1,5 +1,6 @@
 import sys
 import unittest
+import asyncio
 from pathlib import Path
 
 
@@ -137,6 +138,163 @@ class ApimartNanoBananaCatalogTests(unittest.TestCase):
 
         self.assertEqual(detail["code"], "payment_required")
         self.assertIn("余额不足", detail["message"])
+
+    def test_video_task_poll_http_error_is_translated_to_structured_detail(self):
+        class FakeResponse:
+            status_code = 500
+            text = '{"error":{"code":"unsupported_image_count","message":"Passing 2 images returns an unsupported_image_count error."},"request_id":"req_123"}'
+
+            def json(self):
+                return {
+                    "error": {
+                        "code": "unsupported_image_count",
+                        "message": "Passing 2 images returns an unsupported_image_count error.",
+                    },
+                    "request_id": "req_123",
+                }
+
+            def raise_for_status(self):
+                request = main.httpx.Request("GET", "https://api.apimart.ai/v1/tasks/task_1")
+                raise main.httpx.HTTPStatusError("500 Server Error", request=request, response=self)
+
+        class FakeClient:
+            async def get(self, *args, **kwargs):
+                return FakeResponse()
+
+        async def run():
+            original_sleep = main.asyncio.sleep
+            main.asyncio.sleep = lambda *args, **kwargs: original_sleep(0)
+            try:
+                await main.wait_for_apimart_task(
+                    FakeClient(),
+                    "https://api.apimart.ai",
+                    "key",
+                    "task_1",
+                    timeout=1,
+                    failure_classifier=main.classify_apimart_video_failure,
+                )
+            finally:
+                main.asyncio.sleep = original_sleep
+
+        with self.assertRaises(main.HTTPException) as ctx:
+            asyncio.run(run())
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIsInstance(ctx.exception.detail, dict)
+        self.assertEqual(ctx.exception.detail["code"], "unsupported_image_count")
+        self.assertEqual(ctx.exception.detail["request_id"], "req_123")
+        self.assertIn("task_info", ctx.exception.detail)
+
+    def test_video_task_failed_status_uses_video_failure_classifier(self):
+        class FakeResponse:
+            def json(self):
+                return {
+                    "data": {
+                        "status": "failed",
+                        "error": {
+                            "code": "unsupported_image_count",
+                            "message": "Passing 2 images returns an unsupported_image_count error.",
+                        },
+                    }
+                }
+
+            def raise_for_status(self):
+                return None
+
+        class FakeClient:
+            async def get(self, *args, **kwargs):
+                return FakeResponse()
+
+        async def run():
+            original_sleep = main.asyncio.sleep
+            main.asyncio.sleep = lambda *args, **kwargs: original_sleep(0)
+            try:
+                await main.wait_for_apimart_task(
+                    FakeClient(),
+                    "https://api.apimart.ai",
+                    "key",
+                    "task_1",
+                    timeout=1,
+                    failure_classifier=main.classify_apimart_video_failure,
+                )
+            finally:
+                main.asyncio.sleep = original_sleep
+
+        with self.assertRaises(main.HTTPException) as ctx:
+            asyncio.run(run())
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIsInstance(ctx.exception.detail, dict)
+        self.assertEqual(ctx.exception.detail["code"], "unsupported_image_count")
+
+    def test_video_task_poll_network_error_is_translated_to_structured_detail(self):
+        class FakeClient:
+            async def get(self, *args, **kwargs):
+                request = main.httpx.Request("GET", "https://api.apimart.ai/v1/tasks/task_1")
+                raise main.httpx.ConnectError("network down", request=request)
+
+        async def run():
+            original_sleep = main.asyncio.sleep
+            main.asyncio.sleep = lambda *args, **kwargs: original_sleep(0)
+            try:
+                await main.wait_for_apimart_task(
+                    FakeClient(),
+                    "https://api.apimart.ai",
+                    "key",
+                    "task_1",
+                    timeout=1,
+                    failure_classifier=main.classify_apimart_video_failure,
+                )
+            finally:
+                main.asyncio.sleep = original_sleep
+
+        with self.assertRaises(main.HTTPException) as ctx:
+            asyncio.run(run())
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIsInstance(ctx.exception.detail, dict)
+        self.assertEqual(ctx.exception.detail["code"], "upstream_video_error")
+        self.assertIn("network down", ctx.exception.detail["message"])
+        self.assertEqual(ctx.exception.detail["task_info"]["status"], "poll_network_error")
+
+    def test_video_task_poll_invalid_json_is_translated_to_structured_detail(self):
+        class FakeResponse:
+            text = "not-json from upstream"
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                raise ValueError("bad json")
+
+        class FakeClient:
+            async def get(self, *args, **kwargs):
+                return FakeResponse()
+
+        async def run():
+            original_sleep = main.asyncio.sleep
+            main.asyncio.sleep = lambda *args, **kwargs: original_sleep(0)
+            try:
+                await main.wait_for_apimart_task(
+                    FakeClient(),
+                    "https://api.apimart.ai",
+                    "key",
+                    "task_1",
+                    timeout=1,
+                    failure_classifier=main.classify_apimart_video_failure,
+                )
+            finally:
+                main.asyncio.sleep = original_sleep
+
+        with self.assertRaises(main.HTTPException) as ctx:
+            asyncio.run(run())
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIsInstance(ctx.exception.detail, dict)
+        self.assertEqual(ctx.exception.detail["code"], "upstream_video_error")
+        self.assertIn("invalid JSON", ctx.exception.detail["message"])
+        self.assertIn("not-json from upstream", ctx.exception.detail["message"])
+        self.assertEqual(ctx.exception.detail["task_info"]["status"], "poll_parse_error")
 
 
 if __name__ == "__main__":

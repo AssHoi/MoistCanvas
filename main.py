@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.10"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -1257,6 +1257,40 @@ def classify_apimart_video_failure(error_obj, raw_response=None) -> dict:
     return {"message": message, "code": code, "request_id": request_id}
 
 
+def _upstream_exception_status(status_code: int) -> int:
+    try:
+        status = int(status_code)
+    except Exception:
+        return 502
+    return 502 if status >= 500 else status
+
+
+def _parse_httpx_error_response(response) -> dict:
+    try:
+        parsed = response.json()
+        if isinstance(parsed, dict):
+            return parsed
+        return {"message": parsed}
+    except Exception:
+        return {"message": getattr(response, "text", "") or "Upstream HTTP error"}
+
+
+def _apimart_poll_error_detail(task_id: str, status: str, error_obj, failure_classifier, started_at: float, poll_count: int) -> dict:
+    info = failure_classifier(error_obj, error_obj if isinstance(error_obj, dict) else None)
+    task_info = {
+        "taskId": task_id,
+        "status": status,
+        "message": info.get("message") if isinstance(info, dict) else str(info),
+        "pollCount": poll_count,
+        "elapsedSeconds": int(time.monotonic() - started_at),
+        "updatedAt": int(time.time() * 1000),
+    }
+    if isinstance(info, dict):
+        info = dict(info)
+        info["task_info"] = task_info
+    return info
+
+
 def _http_detail_text(detail) -> str:
     if isinstance(detail, dict):
         return " ".join(str(v) for v in detail.values() if v is not None)
@@ -1337,7 +1371,7 @@ async def apimart_job_status(client_job_id: str):
     return info
 
 
-async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None, client_job_id=""):
+async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None, client_job_id="", failure_classifier=classify_apimart_failure):
     """Poll APIMart /v1/tasks/{task_id}?language=zh until completed or failed."""
     root = apimart_api_root(base_url)
     poll_url = f"{root}/v1/tasks/{task_id}?language=zh"
@@ -1357,9 +1391,42 @@ async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None
     poll_count = 0
     while time.monotonic() < deadline:
         await asyncio.sleep(delay)
-        resp = await client.get(poll_url, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = await client.get(poll_url, headers=headers)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            parsed_error = _parse_httpx_error_response(exc.response)
+            info = _apimart_poll_error_detail(task_id, "poll_http_error", parsed_error, failure_classifier, started_at, poll_count)
+            _set_apimart_job_status(client_job_id, info.get("task_info") if isinstance(info, dict) else {})
+            raise HTTPException(
+                status_code=_upstream_exception_status(exc.response.status_code),
+                detail=info,
+            ) from exc
+        except httpx.HTTPError as exc:
+            info = _apimart_poll_error_detail(
+                task_id,
+                "poll_network_error",
+                {"message": f"APIMart task poll request failed: {exc}"},
+                failure_classifier,
+                started_at,
+                poll_count,
+            )
+            _set_apimart_job_status(client_job_id, info.get("task_info") if isinstance(info, dict) else {})
+            raise HTTPException(status_code=502, detail=info) from exc
+        try:
+            data = resp.json()
+        except Exception as exc:
+            raw_text = getattr(resp, "text", "") or ""
+            info = _apimart_poll_error_detail(
+                task_id,
+                "poll_parse_error",
+                {"message": f"APIMart task status returned invalid JSON: {raw_text[:300]}"},
+                failure_classifier,
+                started_at,
+                poll_count,
+            )
+            _set_apimart_job_status(client_job_id, info.get("task_info") if isinstance(info, dict) else {})
+            raise HTTPException(status_code=502, detail=info) from exc
         last_payload = data
         task_data = data.get("data") if isinstance(data.get("data"), dict) else {}
         status = str(task_data.get("status") or "").lower()
@@ -1373,7 +1440,7 @@ async def wait_for_apimart_task(client, base_url, api_key, task_id, timeout=None
             return data
         if status in ("failed", "failure", "error", "cancelled"):
             error_obj = task_data.get("error") or task_data.get("message") or task_data
-            info = classify_apimart_failure(error_obj, raw_response=data)
+            info = failure_classifier(error_obj, raw_response=data)
             task_info = _apimart_task_info(task_id, data, status_override=status, extra={
                 "pollCount": poll_count,
                 "elapsedSeconds": elapsed,
@@ -1776,12 +1843,9 @@ async def apimart_canvas_video(payload, provider, client_job_id=""):
             submit_resp = await client.post(f"{root}/v1/videos/generations", headers=headers, json=body)
             submit_resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            try:
-                parsed_error = exc.response.json()
-            except Exception:
-                parsed_error = {"message": exc.response.text}
+            parsed_error = _parse_httpx_error_response(exc.response)
             raise HTTPException(
-                status_code=exc.response.status_code,
+                status_code=_upstream_exception_status(exc.response.status_code),
                 detail=classify_apimart_video_failure(parsed_error, parsed_error),
             ) from exc
         except httpx.HTTPError as exc:
@@ -1793,7 +1857,7 @@ async def apimart_canvas_video(payload, provider, client_job_id=""):
             task_id = raw.get("task_id")
         if not task_id:
             raise HTTPException(status_code=502, detail=f"APIMart 视频提交未返回 task_id：{str(raw)[:300]}")
-        result = await wait_for_apimart_task(client, root, api_key, task_id, timeout=AI_REQUEST_TIMEOUT, client_job_id=client_job_id)
+        result = await wait_for_apimart_task(client, root, api_key, task_id, timeout=AI_REQUEST_TIMEOUT, client_job_id=client_job_id, failure_classifier=classify_apimart_video_failure)
         outer_data = result.get("data")
         result_data = (outer_data.get("result") or {}) if isinstance(outer_data, dict) else {}
         videos_raw = result_data.get("videos") or []
