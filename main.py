@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -1220,6 +1220,43 @@ def classify_apimart_failure(error_obj, raw_response=None) -> dict:
     }
 
 
+def classify_apimart_video_failure(error_obj, raw_response=None) -> dict:
+    """Map APIMart video errors into structured frontend-friendly details."""
+    text = _flatten_apimart_error(error_obj)
+    lower = text.lower()
+    request_id = _extract_request_id(error_obj, raw_response)
+    code = ""
+    if isinstance(error_obj, dict):
+        code = str(error_obj.get("code") or error_obj.get("type") or "").strip()
+        nested = error_obj.get("error")
+        if not code and isinstance(nested, dict):
+            code = str(nested.get("code") or nested.get("type") or "").strip()
+    code_lower = code.lower()
+    if "unsupported_image_count" in lower or code_lower == "unsupported_image_count":
+        message = "Omni Flash Ext 参考图只支持 0、1 或 3 张；当前像是传了 2 张参考图。请删到 1 张，或补到 3 张。"
+        code = "unsupported_image_count"
+    elif "unsupported_video_count" in lower or code_lower == "unsupported_video_count":
+        message = "Omni Flash Ext 参考视频最多只能传 1 个，请减少参考视频后重试。"
+        code = "unsupported_video_count"
+    elif "invalid_duration" in lower or code_lower == "invalid_duration":
+        message = "Omni Flash Ext 视频时长只支持 4、6、8、10 秒。"
+        code = "invalid_duration"
+    elif "invalid_resolution" in lower or code_lower == "invalid_resolution":
+        message = "Omni Flash Ext 清晰度只支持 720p、1080p、4k。"
+        code = "invalid_resolution"
+    elif "payment_required" in lower or "insufficient" in lower or code_lower == "payment_required":
+        message = "APIMart 余额不足，请充值后重试。"
+        code = "payment_required"
+    elif "rate_limit" in lower or code_lower == "rate_limit_error":
+        message = "APIMart 当前触发限速，请稍后再试。"
+        code = "rate_limit_error"
+    else:
+        short = (text[:180] + "...") if len(text) > 180 else (text or "未知错误")
+        message = f"上游视频接口错误：{short}"
+        code = code or "upstream_video_error"
+    return {"message": message, "code": code, "request_id": request_id}
+
+
 def _http_detail_text(detail) -> str:
     if isinstance(detail, dict):
         return " ".join(str(v) for v in detail.values() if v is not None)
@@ -1708,6 +1745,14 @@ async def apimart_canvas_video(payload, provider, client_job_id=""):
         resolution = payload.resolution or "720p"
         selected_video_model = selected_model(payload.model, "")
         is_omni_flash_ext = selected_video_model.strip().lower() == "omni-flash-ext"
+        if is_omni_flash_ext and len(image_urls) == 2:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Omni Flash Ext 参考图只支持 0、1 或 3 张；当前选择了 2 张。请删到 1 张，或补到 3 张。",
+                    "code": "unsupported_image_count",
+                },
+            )
         body = {
             "prompt": payload.prompt,
             "model": selected_video_model,
@@ -1727,8 +1772,20 @@ async def apimart_canvas_video(payload, provider, client_job_id=""):
             body["return_last_frame"] = True
         if payload.seed is not None:
             body["seed"] = payload.seed
-        submit_resp = await client.post(f"{root}/v1/videos/generations", headers=headers, json=body)
-        submit_resp.raise_for_status()
+        try:
+            submit_resp = await client.post(f"{root}/v1/videos/generations", headers=headers, json=body)
+            submit_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            try:
+                parsed_error = exc.response.json()
+            except Exception:
+                parsed_error = {"message": exc.response.text}
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=classify_apimart_video_failure(parsed_error, parsed_error),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
         raw = submit_resp.json()
         data_list = raw.get("data") if isinstance(raw.get("data"), list) else []
         task_id = data_list[0].get("task_id") if data_list and isinstance(data_list[0], dict) else None

@@ -116,6 +116,28 @@ class ApimartNanoBananaCatalogTests(unittest.TestCase):
 
         self.assertIn("pricing.bill_by === 'per_video_duration'", html)
 
+    def test_video_failure_classifier_explains_unsupported_omni_image_count(self):
+        detail = main.classify_apimart_video_failure({
+            "error": {
+                "code": "unsupported_image_count",
+                "message": "Passing 2 images returns an unsupported_image_count error.",
+            }
+        })
+
+        self.assertEqual(detail["code"], "unsupported_image_count")
+        self.assertIn("0、1 或 3", detail["message"])
+
+    def test_video_failure_classifier_explains_payment_required(self):
+        detail = main.classify_apimart_video_failure({
+            "error": {
+                "code": "payment_required",
+                "message": "Insufficient balance",
+            }
+        })
+
+        self.assertEqual(detail["code"], "payment_required")
+        self.assertIn("余额不足", detail["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
