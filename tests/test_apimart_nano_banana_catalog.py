@@ -62,6 +62,11 @@ class ApimartNanoBananaCatalogTests(unittest.TestCase):
         self.assertIn("const maskUrlModels = new Set", html)
         self.assertIn("imgPayload.mask_url = maskRes.chosen.alphaUrl", html)
 
+    def test_startup_update_does_not_replace_running_batch_files(self):
+        self.assertTrue(main._skip_path_for_update("运行文件.bat"))
+        self.assertTrue(main._skip_path_for_update("安装依赖.bat"))
+        self.assertTrue(main._skip_path_for_update("nested/script.bat"))
+
 
 if __name__ == "__main__":
     unittest.main()

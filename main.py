@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -2855,7 +2855,7 @@ def _skip_path_for_update(rel_path):
     name = rel.rsplit("/", 1)[-1]
     if name in _UPDATE_PROTECTED_FILES:
         return True
-    if name.endswith((".log", ".pyc", ".pyo")):
+    if name.endswith((".log", ".pyc", ".pyo", ".bat")):
         return True
     return False
 
