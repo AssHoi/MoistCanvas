@@ -122,8 +122,8 @@ MODEL_CATALOG_CACHE_FILE = os.path.join(DATA_DIR, "model_catalog_cache.json")
 MODEL_CATALOG_CACHE_TTL = 12 * 3600
 # Bump this whenever APIMART_FALLBACK_CATALOG schema changes (params / pricing structure).
 # Old cache entries with a different version are silently discarded and rebuilt.
-MODEL_CATALOG_CACHE_VERSION = 5
-PRICING_CACHE_VERSION = 1  # bump when parse logic changes to invalidate stale pricing entries
+MODEL_CATALOG_CACHE_VERSION = 6
+PRICING_CACHE_VERSION = 2  # bump when parse logic changes to invalidate stale pricing entries
 FX_RATE_CACHE_FILE = os.path.join(DATA_DIR, "fx_rate_cache.json")
 FX_RATE_TTL = 24 * 3600
 PRICING_CACHE_TTL = 12 * 3600
@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -235,6 +235,20 @@ def _vid_pricing(res_rules: list) -> dict:
     """Build video pricing block. res_rules: [{"resolution": "480p", "per_second": None}, ...]"""
     return {"currency": "USD", "bill_by": "per_second", "rules": res_rules}
 
+def _nano_banana_pro_params() -> dict:
+    return {
+        "resolution": {"type": "select", "label": "图片规格", "title": "输出图片规格档位", "options": ["1K", "2K", "4K"], "default": "1K"},
+        "size":       {"type": "select", "label": "图片比例", "title": "输出图片宽高比例", "options": ["auto","1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"], "option_labels": {"auto": "自动"}, "default": "auto"},
+        "n":          {"type": "select", "label": "生成张数", "title": "单次生成图片数量", "options": [1,2,3,4], "default": 1},
+    }
+
+def _nano_banana_2_params() -> dict:
+    return {
+        "resolution": {"type": "select", "label": "图片规格", "title": "输出图片规格档位", "options": ["0.5K", "1K", "2K", "4K"], "default": "1K"},
+        "size":       {"type": "select", "label": "图片比例", "title": "输出图片宽高比例", "options": ["auto","1:1","3:2","2:3","4:3","3:4","16:9","9:16","5:4","4:5","21:9","1:4","4:1","1:8","8:1"], "option_labels": {"auto": "自动"}, "default": "auto"},
+        "n":          {"type": "select", "label": "生成张数", "title": "单次生成图片数量", "options": [1,2,3,4], "default": 1},
+    }
+
 APIMART_FALLBACK_CATALOG: Dict[str, list] = {
     "image": [
         {
@@ -268,6 +282,52 @@ APIMART_FALLBACK_CATALOG: Dict[str, list] = {
             },
             # Fill per_image (USD) per resolution tier when prices are known.
             "pricing": _img_pricing([
+                {"resolution": "1k", "per_image": None},
+                {"resolution": "2k", "per_image": None},
+                {"resolution": "4k", "per_image": None},
+            ]),
+            "source": "fallback",
+        },
+        {
+            "id": "gemini-3-pro-image-preview",
+            "label": "Nano Banana Pro",
+            "params": _nano_banana_pro_params(),
+            "pricing": _img_pricing([
+                {"resolution": "1k", "per_image": None},
+                {"resolution": "2k", "per_image": None},
+                {"resolution": "4k", "per_image": None},
+            ]),
+            "source": "fallback",
+        },
+        {
+            "id": "gemini-3-pro-image-preview-official",
+            "label": "Nano Banana Pro Official",
+            "params": _nano_banana_pro_params(),
+            "pricing": _img_pricing([
+                {"resolution": "1k", "per_image": None},
+                {"resolution": "2k", "per_image": None},
+                {"resolution": "4k", "per_image": None},
+            ]),
+            "source": "fallback",
+        },
+        {
+            "id": "gemini-3.1-flash-image-preview",
+            "label": "Nano Banana 2",
+            "params": _nano_banana_2_params(),
+            "pricing": _img_pricing([
+                {"resolution": "0.5k", "per_image": None},
+                {"resolution": "1k", "per_image": None},
+                {"resolution": "2k", "per_image": None},
+                {"resolution": "4k", "per_image": None},
+            ]),
+            "source": "fallback",
+        },
+        {
+            "id": "gemini-3.1-flash-image-preview-official",
+            "label": "Nano Banana 2 Official",
+            "params": _nano_banana_2_params(),
+            "pricing": _img_pricing([
+                {"resolution": "0.5k", "per_image": None},
                 {"resolution": "1k", "per_image": None},
                 {"resolution": "2k", "per_image": None},
                 {"resolution": "4k", "per_image": None},
@@ -391,7 +451,14 @@ def default_api_providers():
             "protocol": "apimart",
             "enabled": True,
             "primary": True,
-            "image_models": ["gpt-image-2", "gpt-image-2-official"],
+            "image_models": [
+                "gpt-image-2",
+                "gpt-image-2-official",
+                "gemini-3-pro-image-preview",
+                "gemini-3-pro-image-preview-official",
+                "gemini-3.1-flash-image-preview",
+                "gemini-3.1-flash-image-preview-official",
+            ],
             "chat_models": [],
             "video_models": ["doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-face", "doubao-seedance-2.0-fast-face"],
         },
@@ -413,6 +480,11 @@ def merge_default_api_providers(providers):
                 current_am["protocol"] = "apimart"
             if not current_am.get("image_models"):
                 current_am["image_models"] = list(am_default["image_models"])
+            else:
+                current_am["image_models"] = model_list_from_values([
+                    *current_am.get("image_models", []),
+                    *am_default["image_models"],
+                ])
             if not current_am.get("video_models"):
                 current_am["video_models"] = list(am_default["video_models"])
     # ModelScope is intentionally NOT force-injected anymore. If the user has
@@ -1439,7 +1511,13 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
             if local_path:
                 remote_url = await upload_to_apimart(client, root, api_key, local_path)
                 image_urls.append(remote_url)
-        is_official = str(model or "").strip().lower() == "gpt-image-2-official"
+        model_lc = str(model or "").strip().lower()
+        is_official = model_lc.endswith("-official")
+        supports_mask_url = model_lc in {
+            "gpt-image-2-official",
+            "gemini-3-pro-image-preview-official",
+        }
+        supports_gpt_image_options = model_lc == "gpt-image-2-official"
 
         # ── Mask routing (gpt-image-2-official only) ────────────────────
         # Resolve a frontend-provided mask_url into a remote URL that
@@ -1451,7 +1529,7 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
         remote_mask_url = ""
         if mask_url:
             mask_url = str(mask_url).strip()
-        if is_official and mask_url:
+        if supports_mask_url and mask_url:
             if not image_urls:
                 raise HTTPException(
                     status_code=400,
@@ -1473,15 +1551,15 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
             payload["n"] = int(n)
         if resolution:
             payload["resolution"] = resolution
-        if is_official and quality:
+        if supports_gpt_image_options and quality:
             payload["quality"] = quality
-        if is_official and background:
+        if supports_gpt_image_options and background:
             payload["background"] = background
-        if is_official and moderation:
+        if supports_gpt_image_options and moderation:
             payload["moderation"] = moderation
-        if is_official and output_format:
+        if supports_gpt_image_options and output_format:
             payload["output_format"] = output_format
-        if is_official and output_compression is not None and (output_format or "").lower() != "png":
+        if supports_gpt_image_options and output_compression is not None and (output_format or "").lower() != "png":
             payload["output_compression"] = output_compression
         if image_urls:
             payload["image_urls"] = image_urls
@@ -1995,18 +2073,31 @@ async def _fetch_apimart_pricing_raw(model_id: str) -> Optional[dict]:
     except Exception:
         return None
 
-def _parse_image_pricing(raw: dict) -> Optional[dict]:
+def _parse_image_pricing(raw: dict, fallback_pricing: dict = None) -> Optional[dict]:
     """Convert resolution_prices → per_image rules (non-official image models)."""
     res_prices = raw.get("resolution_prices")
-    if not res_prices:
+    model_price = raw.get("model_price")
+    if not res_prices and not isinstance(model_price, (int, float)):
         return None
     key_map = {"1k": "1k", "2k": "2k", "4k": "4k"}
-    rules = []
-    for k, v in res_prices.items():
+    rules_by_resolution: Dict[str, float] = {}
+    for k, v in (res_prices or {}).items():
         if not isinstance(v, (int, float)):
             continue
         mapped = key_map.get(k.lower(), k.lower())
-        rules.append({"resolution": mapped, "per_image": float(v)})
+        rules_by_resolution[mapped] = float(v)
+    if isinstance(model_price, (int, float)):
+        fallback_rules = (fallback_pricing or {}).get("rules") or []
+        for rule in fallback_rules:
+            resolution = str(rule.get("resolution") or "").lower()
+            if resolution and resolution not in rules_by_resolution:
+                rules_by_resolution[resolution] = float(model_price)
+        if not rules_by_resolution:
+            rules_by_resolution["1k"] = float(model_price)
+    rules = [
+        {"resolution": resolution, "per_image": price}
+        for resolution, price in rules_by_resolution.items()
+    ]
     return {"currency": "USD", "bill_by": "per_image", "source": "apimart-pricing-api", "rules": rules} if rules else None
 
 def _parse_official_image_pricing(raw: dict) -> Optional[dict]:
@@ -2073,7 +2164,7 @@ async def _get_model_pricing(model_id: str, fallback_pricing: dict) -> dict:
         elif billing_type == "per_second" or any(k.lower().endswith("-input") for k in res_prices):
             pricing = _parse_video_pricing(payload)
         else:
-            pricing = _parse_image_pricing(payload)
+            pricing = _parse_image_pricing(payload, fallback_pricing)
     if pricing:
         cache[cache_key] = {"fetched_at": now, "pricing_version": PRICING_CACHE_VERSION, "pricing": pricing}
         _save_catalog_cache(cache)
@@ -2150,7 +2241,14 @@ async def _try_fetch_apimart_models(provider: Dict[str, Any], kind: str) -> Opti
     except Exception:
         return None
 
-_ALLOWED_IMAGE_IDS = {"gpt-image-2", "gpt-image-2-official"}
+_ALLOWED_IMAGE_IDS = {
+    "gpt-image-2",
+    "gpt-image-2-official",
+    "gemini-3-pro-image-preview",
+    "gemini-3-pro-image-preview-official",
+    "gemini-3.1-flash-image-preview",
+    "gemini-3.1-flash-image-preview-official",
+}
 _ALLOWED_VIDEO_PREFIXES = ("doubao-seedance-2.0",)
 
 def _filter_catalog_models(upstream_ids: Optional[list], kind: str) -> list:

@@ -8936,7 +8936,11 @@ async function _runGenerationTask(task) {
     // In both cases the masked source image is hoisted to refList[0] so
     // downstream upstreams that anchor mask_url to the FIRST image (the
     // official channel does this) see them paired correctly.
-    const isOfficialModel = String(model || '').trim().toLowerCase() === 'gpt-image-2-official';
+    const maskUrlModels = new Set([
+      'gpt-image-2-official',
+      'gemini-3-pro-image-preview-official'
+    ]);
+    const isOfficialModel = maskUrlModels.has(String(model || '').trim().toLowerCase());
     const maskRes = resolveActiveMask(refsSnapshot);
     let maskLogInfo = null;
     let promptForBody = finalPrompt;
