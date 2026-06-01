@@ -1937,7 +1937,7 @@
       pointer-events: none;
       z-index: 30;
     }
-    /* Right-panel drag-drop hint — fires when dragging external image files
+    /* Right-panel drag-drop hint — fires when dragging external media files
        over the conversation/composer area. Subtle accent ring + tiny label
        in the composer area so the user knows the drop will create a ref
        chip rather than a chat attachment. */
@@ -1948,7 +1948,7 @@
       background: rgba(16, 132, 102, 0.06);
     }
     #right-panel.drop-target-active #composer::before {
-      content: '松开鼠标添加为参考图';
+      content: '松开鼠标添加为参考图/视频';
       position: absolute;
       top: -22px; left: 50%;
       transform: translateX(-50%);
@@ -3147,7 +3147,7 @@
 <body>
 
 <!-- Hidden file input -->
-<input type="file" id="file-input" multiple accept="image/png,image/jpeg,image/webp" style="display:none">
+<input type="file" id="file-input" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" style="display:none">
 
 <!-- Canvas manager gate -->
 <div id="canvas-gate">
@@ -5977,6 +5977,31 @@ function createVideoNode(url, name, x, y, restoreId) {
   return id;
 }
 
+const EXTERNAL_MEDIA_FORMATS_LABEL = 'PNG / JPG / WebP / MP4 / WebM / MOV';
+
+function fileExt(name) {
+  const clean = String(name || '').split('?')[0].toLowerCase();
+  const idx = clean.lastIndexOf('.');
+  return idx >= 0 ? clean.slice(idx) : '';
+}
+
+function isSupportedExternalMedia(file) {
+  const type = String(file && file.type || '').toLowerCase();
+  const ext = fileExt(file && file.name);
+  return /^image\/(png|jpe?g|webp)$/i.test(type)
+    || /^video\/(mp4|webm|quicktime)$/i.test(type)
+    || ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.webm', '.mov'].includes(ext);
+}
+
+function isVideoUpload(item, originalFile) {
+  const kind = String((item && (item.kind || item.type)) || '').toLowerCase();
+  const mime = String((item && item.mime) || (originalFile && originalFile.type) || '').toLowerCase();
+  const ext = fileExt((item && (item.name || item.url)) || (originalFile && originalFile.name));
+  return kind === 'video'
+    || /^video\//.test(mime)
+    || ['.mp4', '.webm', '.mov'].includes(ext);
+}
+
 // ═══════════════════════════════════════════════
 // UPLOAD
 // ═══════════════════════════════════════════════
@@ -5991,6 +6016,11 @@ document.getElementById('file-input').addEventListener('change', (e) => {
 });
 
 async function uploadImages(files) {
+  const media = Array.from(files || []).filter(isSupportedExternalMedia);
+  if (media.length === 0) { showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL); return; }
+  if (media.length < (files || []).length) {
+    showToast('已忽略 ' + ((files || []).length - media.length) + ' 个非图片/视频文件');
+  }
   const spinner = document.getElementById('upload-spinner');
   const toolBtn = document.getElementById('tool-img');
   spinner.style.display = 'block';
@@ -5998,7 +6028,7 @@ async function uploadImages(files) {
   setStatus('上传中，请稍候...', false);
 
   const fd = new FormData();
-  files.forEach(f => fd.append('files', f));
+  media.forEach(f => fd.append('files', f));
 
   try {
     const res = await fetch('/api/ai/upload', { method: 'POST', body: fd });
@@ -6009,17 +6039,21 @@ async function uploadImages(files) {
     const data = await res.json();
     setStatus('', false);
 
-    // Place images in a row at viewport center
+    // Place media in a row at viewport center
     const GAP = 20;
     const uploaded = data.files || [];
-    if (uploaded.length > 0) pushUndoSnapshot('插入图片');
+    if (uploaded.length > 0) pushUndoSnapshot('插入素材');
     const positions = placeMediaGroupNearViewport(uploaded.length, 260, 400, GAP, canvasCenter());
     uploaded.forEach((f, i) => {
       const p = positions[i] || positions[0] || { x: 0, y: 0 };
-      createImageNode(f.url, f.name, p.x, p.y, null, null, null, null, { originLabel: '外部导入：' + (f.name || 'image') });
+      if (isVideoUpload(f, media[i])) {
+        createVideoNode(f.url, f.name, p.x, p.y);
+      } else {
+        createImageNode(f.url, f.name, p.x, p.y, null, null, null, null, { originLabel: '外部导入：' + (f.name || 'image') });
+      }
     });
 
-    showToast('已插入 ' + uploaded.length + ' 张图片');
+    showToast('已插入 ' + uploaded.length + ' 个素材');
     setTool('select');
     scheduleSave();
   } catch (err) {
@@ -7790,7 +7824,7 @@ function closeHistoryModal() {
 })();
 
 // ═══════════════════════════════════════════════
-// CANVAS FILE DRAG-DROP (drop external images onto the canvas)
+// CANVAS FILE DRAG-DROP (drop external media onto the canvas)
 // ═══════════════════════════════════════════════
 (function initCanvasDrop() {
   const area = document.getElementById('canvas-area');
@@ -7827,17 +7861,17 @@ function closeHistoryModal() {
     clearDragHighlights();
     const files = Array.from(e.dataTransfer.files || []);
     if (!files.length) return;
-    const images = files.filter(f => /^image\/(png|jpe?g|webp)$/i.test(f.type));
-    if (images.length === 0) { showToast('仅支持 PNG / JPG / WebP'); return; }
-    if (images.length < files.length) {
-      showToast('已忽略 ' + (files.length - images.length) + ' 个非图片文件');
+    const media = files.filter(isSupportedExternalMedia);
+    if (media.length === 0) { showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL); return; }
+    if (media.length < files.length) {
+      showToast('已忽略 ' + (files.length - media.length) + ' 个非图片/视频文件');
     }
     const vRect = viewport.getBoundingClientRect();
     const px = e.clientX - vRect.left;
     const py = e.clientY - vRect.top;
     const wx = (px - tx) / scale;
     const wy = (py - ty) / scale;
-    await uploadImagesAtPoint(images, wx, wy);
+    await uploadImagesAtPoint(media, wx, wy);
   });
   document.addEventListener('dragend', clearDragHighlights);
   document.addEventListener('drop', clearDragHighlights);
@@ -7858,29 +7892,34 @@ async function uploadImagesAtPoint(files, wx, wy) {
     setStatus('', false);
     const uploaded = data.files || [];
     if (!uploaded.length) { showToast('上传无结果'); return; }
-    pushUndoSnapshot('拖入图片');
+    pushUndoSnapshot('拖入素材');
     const GAP = 200;
     const startX = wx - ((uploaded.length - 1) * GAP) / 2 - 90;
     const newIds = [];
     uploaded.forEach((f, i) => {
-      const id = createImageNode(
-        f.url,
-        f.name,
-        startX + i * GAP,
-        wy - 90,
-        null,
-        null,
-        null,
-        null,
-        { originLabel: '外部导入：' + (f.name || 'image') },
-      );
+      let id;
+      if (isVideoUpload(f, files[i])) {
+        id = createVideoNode(f.url, f.name, startX + i * GAP, wy - 90);
+      } else {
+        id = createImageNode(
+          f.url,
+          f.name,
+          startX + i * GAP,
+          wy - 90,
+          null,
+          null,
+          null,
+          null,
+          { originLabel: '外部导入：' + (f.name || 'image') },
+        );
+      }
       if (id) newIds.push(id);
     });
     selectedIds.clear();
     newIds.forEach(id => selectedIds.add(id));
     updateSelectionVisuals();
     updateInsertChatBar();
-    showToast('已插入 ' + uploaded.length + ' 张图片');
+    showToast('已插入 ' + uploaded.length + ' 个素材');
     scheduleSave();
   } catch (err) {
     setStatus('上传失败：' + err.message, true);
@@ -7889,36 +7928,36 @@ async function uploadImagesAtPoint(files, wx, wy) {
 }
 
 // ═══════════════════════════════════════════════
-// PROMPT-AREA EXTERNAL IMAGE DROP
+// PROMPT-AREA EXTERNAL MEDIA DROP
 // ─────────────────────────────────────────────────────────────────────────
-// Dropping an image file from the OS file manager onto the right-side
+// Dropping an image/video file from the OS file manager onto the right-side
 // conversation/composer area is treated as "one-step add as reference":
 //   1) upload via the same endpoint canvas drops use
-//   2) create a real image node on the canvas (so the asset behaves like
-//      every other image — moveable, exportable, persisted)
+//   2) create a real media node on the canvas (so the asset behaves like
+//      every other canvas asset — moveable, exportable, persisted)
 //   3) push to refs[] with empty label, then renumberRefs() so it gets the
 //      smallest unused @图N slot — pre-existing @图1 stays @图1
 //   4) insertAtRef(label) drops the chip at the editor caret (falls back to
 //      end of prompt when the editor isn't focused)
 //
-// The image is NEVER inserted into the contenteditable as a base64 <img>.
+// The media is NEVER inserted into the contenteditable as a base64 blob.
 // We preventDefault on dragover + drop to suppress the browser's default
 // content-editable handling.
 // ═══════════════════════════════════════════════
 async function addExternalImagesAsPromptRefs(files) {
   const fileList = Array.from(files || []);
   if (!fileList.length) return;
-  const images = fileList.filter(f => /^image\/(png|jpe?g|webp)$/i.test(f.type));
-  if (images.length === 0) { showToast('仅支持 PNG / JPG / WebP'); return; }
-  if (images.length < fileList.length) {
-    showToast('已忽略 ' + (fileList.length - images.length) + ' 个非图片文件');
+  const media = fileList.filter(isSupportedExternalMedia);
+  if (media.length === 0) { showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL); return; }
+  if (media.length < fileList.length) {
+    showToast('已忽略 ' + (fileList.length - media.length) + ' 个非图片/视频文件');
   }
 
   setStatus('上传中，请稍候...', false);
   let uploaded;
   try {
     const fd = new FormData();
-    images.forEach(f => fd.append('files', f));
+    media.forEach(f => fd.append('files', f));
     const res = await fetch('/api/ai/upload', { method: 'POST', body: fd });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -7934,7 +7973,7 @@ async function addExternalImagesAsPromptRefs(files) {
   }
   if (!uploaded.length) { showToast('上传无结果'); return; }
 
-  pushUndoSnapshot('拖入图片为参考');
+  pushUndoSnapshot('拖入素材为参考');
 
   // Smart placement near current viewport center — avoids stacking on top of
   // existing images. Same helper canvas-image generation uses.
@@ -7949,19 +7988,22 @@ async function addExternalImagesAsPromptRefs(files) {
   const createdRefs = [];
   uploaded.forEach((f, i) => {
     const pos = positions[i] || { x: 0, y: 0 };
-    const id = createImageNode(
-      f.url, f.name, pos.x, pos.y,
-      null, null, null, null,
-      { originLabel: '外部导入：' + (f.name || 'image') },
-    );
+    const isVideo = isVideoUpload(f, media[i]);
+    const id = isVideo
+      ? createVideoNode(f.url, f.name, pos.x, pos.y)
+      : createImageNode(
+          f.url, f.name, pos.x, pos.y,
+          null, null, null, null,
+          { originLabel: '外部导入：' + (f.name || 'image') },
+        );
     if (!id) return;
-    const ref = { nodeId: id, type: 'image', url: f.url, name: f.name || '', label: '' };
+    const ref = { nodeId: id, type: isVideo ? 'video' : 'image', url: f.url, name: f.name || '', label: '' };
     refs.push(ref);
     createdRefs.push(ref);
   });
 
   if (createdRefs.length === 0) {
-    showToast('未能创建图片节点');
+    showToast('未能创建素材节点');
     return;
   }
 
@@ -7978,7 +8020,7 @@ async function addExternalImagesAsPromptRefs(files) {
   createdRefs.forEach(ref => { if (ref.label) insertAtRef(ref.label); });
 
   scheduleSave();
-  showToast('已添加 ' + createdRefs.length + ' 张参考图');
+  showToast('已添加 ' + createdRefs.length + ' 个参考素材');
   // Keep keyboard focus in the editor so the user can keep typing.
   if (promptEditor) promptEditor.focus();
 }

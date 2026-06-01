@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -990,6 +990,12 @@ def content_type_for_path(path):
         return "image/jpeg"
     if ext == ".webp":
         return "image/webp"
+    if ext == ".mp4":
+        return "video/mp4"
+    if ext == ".webm":
+        return "video/webm"
+    if ext == ".mov":
+        return "video/quicktime"
     return "image/png"
 
 def convert_output_to_jpg(url, quality=88):
@@ -1489,6 +1495,32 @@ def extract_apimart_image_results(data) -> list:
         raise HTTPException(status_code=502, detail=f"无法从 APIMart 任务结果中提取图片 URL：{str(data)[:300]}")
     return results
 
+def extract_apimart_video_result_urls(result_data) -> list:
+    videos_raw = result_data.get("videos") if isinstance(result_data, dict) else result_data
+    if not isinstance(videos_raw, list):
+        return []
+
+    urls = []
+    seen = set()
+
+    def add_url(value):
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, str):
+                item = item.strip()
+                if item and item not in seen:
+                    seen.add(item)
+                    urls.append(item)
+
+    for video in videos_raw:
+        if isinstance(video, str):
+            add_url(video)
+        elif isinstance(video, dict):
+            for key in ("url", "link", "download_url"):
+                add_url(video.get(key))
+
+    return urls
+
 def extract_apimart_image_result(data):
     """Single-image compat shim — returns first result from extract_apimart_image_results."""
     return extract_apimart_image_results(data)[0]
@@ -1860,15 +1892,7 @@ async def apimart_canvas_video(payload, provider, client_job_id=""):
         result = await wait_for_apimart_task(client, root, api_key, task_id, timeout=AI_REQUEST_TIMEOUT, client_job_id=client_job_id, failure_classifier=classify_apimart_video_failure)
         outer_data = result.get("data")
         result_data = (outer_data.get("result") or {}) if isinstance(outer_data, dict) else {}
-        videos_raw = result_data.get("videos") or []
-        urls = []
-        for v in videos_raw:
-            if isinstance(v, str):
-                urls.append(v)
-            elif isinstance(v, dict):
-                u = v.get("url") or v.get("link") or v.get("download_url") or ""
-                if u:
-                    urls.append(u)
+        urls = extract_apimart_video_result_urls(result_data)
         if not urls:
             raise HTTPException(status_code=502, detail=f"APIMart 视频生成成功但没有返回视频 URL：{str(result)[:300]}")
         local_urls = [await save_remote_video_to_output(u) for u in urls]
@@ -2084,20 +2108,40 @@ def open_output_folder():
 
 @app.post("/api/ai/upload")
 async def upload_ai_reference(files: List[UploadFile] = File(...)):
+    image_exts = {".png", ".jpg", ".jpeg", ".webp"}
+    video_exts = {".mp4", ".webm", ".mov"}
+    mime_to_ext = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/quicktime": ".mov",
+    }
     uploaded = []
     for file in files:
         content = await file.read()
         if not content:
             continue
         ext = os.path.splitext(file.filename or "")[1].lower()
-        if ext not in [".png", ".jpg", ".jpeg", ".webp"]:
-            content_type = (file.content_type or "").lower()
-            ext = ".jpg" if "jpeg" in content_type else ".webp" if "webp" in content_type else ".png"
+        content_type = (file.content_type or "").split(";", 1)[0].lower()
+        if ext not in image_exts and ext not in video_exts:
+            ext = mime_to_ext.get(content_type, "")
+        if ext not in image_exts and ext not in video_exts:
+            raise HTTPException(status_code=400, detail="仅支持 PNG / JPG / WebP / MP4 / WebM / MOV")
+        kind = "video" if ext in video_exts else "image"
+        mime = mime_to_ext.get(content_type) and content_type or content_type_for_path("x" + ext)
         filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
         path = os.path.join(OUTPUT_DIR, filename)
         with open(path, "wb") as f:
             f.write(content)
-        uploaded.append({"url": f"/output/{filename}", "name": file.filename or filename})
+        uploaded.append({
+            "url": f"/output/{filename}",
+            "name": file.filename or filename,
+            "type": kind,
+            "kind": kind,
+            "mime": mime,
+        })
     return {"files": uploaded}
 
 @app.get("/api/providers")

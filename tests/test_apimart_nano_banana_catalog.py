@@ -112,6 +112,30 @@ class ApimartNanoBananaCatalogTests(unittest.TestCase):
         self.assertEqual(ref_rules["720p"], 0.042)
         self.assertEqual(ref_rules["4k"], 0.08)
 
+    def test_apimart_video_result_urls_accept_url_arrays(self):
+        result_data = {
+            "videos": [
+                {"url": ["https://cdn.example.com/a.mp4", "", "https://cdn.example.com/a.mp4"]},
+                {"link": ["https://cdn.example.com/b.mp4"]},
+                {"download_url": ["https://cdn.example.com/c.mp4", None]},
+                {"url": []},
+                {"url": ["https://cdn.example.com/d.mp4"], "link": "https://cdn.example.com/d-alt.mp4"},
+                "https://cdn.example.com/e.mp4",
+            ]
+        }
+
+        self.assertEqual(
+            main.extract_apimart_video_result_urls(result_data),
+            [
+                "https://cdn.example.com/a.mp4",
+                "https://cdn.example.com/b.mp4",
+                "https://cdn.example.com/c.mp4",
+                "https://cdn.example.com/d.mp4",
+                "https://cdn.example.com/d-alt.mp4",
+                "https://cdn.example.com/e.mp4",
+            ],
+        )
+
     def test_canvas_price_estimate_supports_per_video_duration(self):
         html = (ROOT / "static" / "canvas.html").read_text(encoding="utf-8")
 
