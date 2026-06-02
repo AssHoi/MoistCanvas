@@ -32,10 +32,43 @@ def test_file_input_and_drop_copy_accept_video_formats():
 
     assert 'accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"' in html
     assert "PNG / JPG / WebP / MP4 / WebM / MOV" in html
+    assert "仅支持 PNG / JPG / WebP" not in html
     assert "video/mp4" in html
     assert "video/webm" in html
     assert "video/quicktime" in html
     assert ".mov" in html
+
+
+def test_external_media_rejection_uses_one_video_aware_toast():
+    html = _html()
+
+    assert "function showUnsupportedExternalMediaToast()" in html
+    assert html.count("仅支持 ") == 1
+    assert html.count("showToast('仅支持 ") == 1
+
+    for fn_name in ("uploadImages", "uploadImagesAtPoint", "addExternalImagesAsPromptRefs"):
+        block = _fn(html, fn_name)
+        assert "showUnsupportedExternalMediaToast()" in block
+        assert "EXTERNAL_MEDIA_FORMATS_LABEL" not in block
+
+
+def test_drag_and_drop_filters_do_not_use_image_only_regex():
+    html = _html()
+
+    canvas_drop = html[
+        html.index("// CANVAS FILE DRAG-DROP") :
+        html.index("async function uploadImagesAtPoint", html.index("// CANVAS FILE DRAG-DROP"))
+    ]
+    prompt_drop = html[
+        html.index("async function addExternalImagesAsPromptRefs(files)") :
+        html.index("// MODEL CATALOG", html.index("async function addExternalImagesAsPromptRefs(files)"))
+    ]
+
+    for block in (canvas_drop, prompt_drop):
+        assert "isSupportedExternalMedia" in block
+        assert "isSupportedExternalImageFile" not in block
+        assert "/^image" not in block
+        assert "image/" not in block
 
 
 def test_canvas_uploads_create_video_nodes_for_video_files():

@@ -11,6 +11,30 @@ import main  # noqa: E402
 
 
 class ApimartNanoBananaCatalogTests(unittest.TestCase):
+    def test_image_catalog_keeps_curated_fallback_models_when_upstream_cache_omits_one(self):
+        fallback_ids = [item["id"] for item in main.APIMART_FALLBACK_CATALOG["image"]]
+        upstream_ids = [model_id for model_id in fallback_ids if model_id != "gpt-image-2"]
+
+        filtered_ids = [
+            item["id"]
+            for item in main._filter_catalog_models(upstream_ids, "image")
+        ]
+
+        self.assertIn("gpt-image-2", filtered_ids)
+        self.assertEqual(filtered_ids, fallback_ids)
+
+    def test_video_catalog_keeps_curated_fallback_models_when_upstream_cache_omits_one(self):
+        fallback_ids = [item["id"] for item in main.APIMART_FALLBACK_CATALOG["video"]]
+        upstream_ids = [model_id for model_id in fallback_ids if model_id != "Omni-Flash-Ext"]
+
+        filtered_ids = [
+            item["id"]
+            for item in main._filter_catalog_models(upstream_ids, "video")
+        ]
+
+        self.assertIn("Omni-Flash-Ext", filtered_ids)
+        self.assertEqual(filtered_ids, fallback_ids)
+
     def test_image_pricing_uses_model_price_for_missing_resolution_tiers(self):
         fallback = main._img_pricing([
             {"resolution": "1k", "per_image": None},

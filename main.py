@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -2484,15 +2484,13 @@ _ALLOWED_VIDEO_PREFIXES = ("doubao-seedance-2.0",)
 
 def _filter_catalog_models(upstream_ids: Optional[list], kind: str) -> list:
     """
-    Build model list from fallback catalog, optionally confirming existence via upstream_ids.
-    Always returns fallback params since APIMart doesn't expose them via API.
+    Build model list from the curated fallback catalog.
+
+    upstream_ids are still cached by _build_catalog for sync_status diagnostics and
+    later pricing refreshes, but APIMart's /v1/models response can be stale or
+    account-filtered. Do not let that hide curated defaults from the UI.
     """
-    fallback = APIMART_FALLBACK_CATALOG.get(kind, [])
-    if upstream_ids is None:
-        return fallback
-    upstream_set = set(upstream_ids)
-    filtered = [m for m in fallback if m["id"] in upstream_set]
-    return filtered if filtered else fallback
+    return APIMART_FALLBACK_CATALOG.get(kind, [])
 
 async def _build_catalog(kind: str) -> Dict[str, Any]:
     """

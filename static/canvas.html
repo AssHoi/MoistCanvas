@@ -722,7 +722,8 @@
       width: 100%;
       line-height: 0;
     }
-    .img-node .img-origin-label {
+    .img-node .img-origin-label,
+    .vid-node .vid-origin-label {
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -836,7 +837,7 @@
     /* Top bar — Lovable: cream surface, warm #eceae4 border, no shadow at rest. */
     #canvas-topbar {
       position: absolute;
-      top: 14px; left: 50%;
+      bottom: 32px; left: 50%;
       transform: translateX(-50%);
       background: #FCFBF8;
       border: 1px solid var(--border);
@@ -1137,57 +1138,6 @@
 
     /* ── Bottom toolbar ── */
     /* Bottom tool dock — Lovable: cream container, 12px radius, warm border, no shadow */
-    #canvas-toolbar {
-      position: absolute;
-      bottom: 32px; left: 50%;
-      transform: translateX(-50%);
-      background: #FCFBF8;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);          /* 12px */
-      padding: 6px 8px;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      z-index: 20;
-    }
-
-    .tool-btn {
-      width: 36px; height: 36px;
-      border-radius: var(--radius-full);        /* icon button — pill allowed */
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      transition: background .12s, color .12s, opacity .12s;
-      position: relative;
-    }
-    .tool-btn:hover  { background: var(--surface-soft); color: var(--text); }
-    .tool-btn:active { opacity: .8; }
-    .tool-btn.active {
-      background: var(--accent);                /* charcoal */
-      color: var(--accent-on);
-      box-shadow: var(--shadow-inset);
-    }
-    .tool-btn svg { width: 18px; height: 18px; }
-
-    .toolbar-sep {
-      width: 1px; height: 20px;
-      background: var(--border);
-      margin: 0 4px;
-    }
-
-    /* Upload spinner inside toolbar */
-    #upload-spinner {
-      display: none;
-      width: 16px; height: 16px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
     /* ── Right panel ── */
     #right-panel {
       width: 360px;
@@ -2421,11 +2371,11 @@
     /* ── Video node ── */
     .vid-node {
       padding: 6px;
-      width: 240px;
     }
     .vid-node video {
       width: 100%;
-      height: 135px;
+      height: auto;
+      aspect-ratio: 16 / 9;
       border-radius: 7px;
       display: block;
       background: #000;
@@ -3229,35 +3179,6 @@
     <button id="clear-sel-btn" onclick="clearSelection()" title="取消选中">✕</button>
   </div>
 
-  <!-- Bottom toolbar -->
-  <div id="canvas-toolbar">
-    <button class="tool-btn active" id="tool-select" onclick="setTool('select')" title="选择">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M5 3l14 9-7 1-4 7z"/>
-      </svg>
-    </button>
-    <div class="toolbar-sep"></div>
-    <!-- Upload image button -->
-    <button class="tool-btn" id="tool-img" onclick="triggerUpload()" title="插入图片">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <circle cx="8.5" cy="8.5" r="1.5"/>
-        <polyline points="21 15 16 10 5 21"/>
-      </svg>
-    </button>
-    <div id="upload-spinner"></div>
-    <div class="toolbar-sep"></div>
-    <button class="tool-btn" onclick="zoomIn()" title="放大">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
-      </svg>
-    </button>
-    <button class="tool-btn" onclick="zoomOut()" title="缩小">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>
-      </svg>
-    </button>
-  </div>
 </div>
 
 <!-- ── Right Panel ── -->
@@ -3630,8 +3551,10 @@ function cloneCanvasNodeForClipboard(node) {
       kind: 'video',
       url:  node.url || '',
       name: node.name || '',
+      originLabel: node.originLabel || '',
       x:    typeof node.x === 'number' ? node.x : 0,
       y:    typeof node.y === 'number' ? node.y : 0,
+      width:  node.width || 240,
     };
   }
   return null;
@@ -3702,7 +3625,7 @@ function pasteCopiedNodes() {
       );
       if (id) newIds.push(id);
     } else if (item.kind === 'video') {
-      const id = createVideoNode(item.url, item.name, tx_, ty_);
+      const id = createVideoNode(item.url, item.name, tx_, ty_, null, item.width, { originLabel: item.originLabel || '' });
       if (id) newIds.push(id);
     }
   });
@@ -4033,9 +3956,6 @@ function finishSelection() {
 
 function setTool(name) {
   currentTool = name;
-  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
-  const btn = document.getElementById('tool-' + name);
-  if (btn) btn.classList.add('active');
 }
 
 // ═══════════════════════════════════════════════
@@ -4243,7 +4163,7 @@ function renderSelectionOverlay() {
   // Single-image selection → 4 corner handles on the image itself
   if (selRects.length === 1) {
     const only = selRects[0];
-    if (imageNodes.has(only.id)) {
+    if (nodeEntryById(only.id)) {
       appendHandles(only.rect, vRect, 'single', only.id);
     }
     return;
@@ -4338,7 +4258,7 @@ function beginOverlayResize(e) {
 
   if (mode === 'single') {
     const id = e.currentTarget.dataset.targetId;
-    const entry = imageNodes.get(id);
+    const entry = nodeEntryById(id);
     if (!entry) return;
     const box = nodeWorldBox(entry.el);
     // Pivot = the corner OPPOSITE the dragged handle (stays fixed during drag).
@@ -4421,9 +4341,9 @@ function updateGroupResize(e) {
   const fy = Math.abs(pt.y - st.pivot.y) / Math.max(1, st.bounds.h);
   // Uniform scaling — use the larger axis so drag feels responsive.
   let f = Math.max(fx, fy);
-  // Clamp so no image goes below 80 or above 1200 width.
+  // Clamp so no resizable media node goes below 80 or above 1200 width.
   st.items.forEach(it => {
-    if (!it.isImage) return;
+    if (!it.isImage && !it.isVideo) return;
     const minF = 80   / Math.max(1, it.box.w);
     const maxF = 1200 / Math.max(1, it.box.w);
     f = Math.max(minF, Math.min(maxF, f));
@@ -4437,12 +4357,12 @@ function updateGroupResize(e) {
     it.el.style.left = nx + 'px';
     it.el.style.top  = ny + 'px';
     if (it.entry) { it.entry.x = nx; it.entry.y = ny; }
-    // Width: only image nodes resize; video keeps its fixed CSS size.
-    if (it.isImage && it.entry) {
+    // Width: image and video nodes scale with the group.
+    if ((it.isImage || it.isVideo) && it.entry) {
       const newW = Math.max(80, Math.min(1200, it.box.w * f));
       it.el.style.width = newW + 'px';
       it.entry.width = newW;
-      if (it.entry.naturalWidth && it.entry.naturalHeight) {
+      if (it.isImage && it.entry.naturalWidth && it.entry.naturalHeight) {
         it.entry.height = Math.round(newW * it.entry.naturalHeight / it.entry.naturalWidth);
       }
     }
@@ -5945,13 +5865,16 @@ function getAllMarkers() {
 // ═══════════════════════════════════════════════
 // VIDEO NODES
 // ═══════════════════════════════════════════════
-function createVideoNode(url, name, x, y, restoreId) {
+function createVideoNode(url, name, x, y, restoreId, width, options) {
   const id = restoreId || genNodeId();
+  const videoWidth = Math.max(80, Math.min(1200, Number(width) || 240));
+  const originLabel = (options && options.originLabel) ? String(options.originLabel) : '';
 
   const el = document.createElement('div');
   el.className = 'c-node vid-node';
   el.style.left = x + 'px';
   el.style.top  = y + 'px';
+  el.style.width = videoWidth + 'px';
 
   const video = document.createElement('video');
   video.src = url;
@@ -5968,16 +5891,29 @@ function createVideoNode(url, name, x, y, restoreId) {
   nameEl.textContent = name || '生成视频';
   nameEl.title = name || '生成视频';
 
+  let originEl = null;
+  if (originLabel) {
+    originEl = document.createElement('div');
+    originEl.className = 'vid-origin-label';
+    originEl.textContent = originLabel;
+    originEl.title = originLabel;
+  }
+
+  if (originEl) el.appendChild(originEl);
   el.appendChild(video);
   el.appendChild(nameEl);
   world.appendChild(el);
 
-  videoNodes.set(id, { id, type: 'video', url, name: name || '生成视频', x, y, el });
+  videoNodes.set(id, { id, type: 'video', url, name: name || '生成视频', x, y, originLabel, width: videoWidth, el });
   enableNodeDrag(el, id);
   return id;
 }
 
 const EXTERNAL_MEDIA_FORMATS_LABEL = 'PNG / JPG / WebP / MP4 / WebM / MOV';
+
+function showUnsupportedExternalMediaToast() {
+  showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL);
+}
 
 function fileExt(name) {
   const clean = String(name || '').split('?')[0].toLowerCase();
@@ -6017,14 +5953,10 @@ document.getElementById('file-input').addEventListener('change', (e) => {
 
 async function uploadImages(files) {
   const media = Array.from(files || []).filter(isSupportedExternalMedia);
-  if (media.length === 0) { showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL); return; }
+  if (media.length === 0) { showUnsupportedExternalMediaToast(); return; }
   if (media.length < (files || []).length) {
     showToast('已忽略 ' + ((files || []).length - media.length) + ' 个非图片/视频文件');
   }
-  const spinner = document.getElementById('upload-spinner');
-  const toolBtn = document.getElementById('tool-img');
-  spinner.style.display = 'block';
-  toolBtn.style.display = 'none';
   setStatus('上传中，请稍候...', false);
 
   const fd = new FormData();
@@ -6047,7 +5979,7 @@ async function uploadImages(files) {
     uploaded.forEach((f, i) => {
       const p = positions[i] || positions[0] || { x: 0, y: 0 };
       if (isVideoUpload(f, media[i])) {
-        createVideoNode(f.url, f.name, p.x, p.y);
+        createVideoNode(f.url, f.name, p.x, p.y, null, null, { originLabel: '外部导入：' + (f.name || 'video') });
       } else {
         createImageNode(f.url, f.name, p.x, p.y, null, null, null, null, { originLabel: '外部导入：' + (f.name || 'image') });
       }
@@ -6059,9 +5991,6 @@ async function uploadImages(files) {
   } catch (err) {
     setStatus('上传失败：' + err.message, true);
     showToast('上传失败：' + err.message);
-  } finally {
-    spinner.style.display = 'none';
-    toolBtn.style.display = 'flex';
   }
 }
 
@@ -7862,7 +7791,7 @@ function closeHistoryModal() {
     const files = Array.from(e.dataTransfer.files || []);
     if (!files.length) return;
     const media = files.filter(isSupportedExternalMedia);
-    if (media.length === 0) { showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL); return; }
+    if (media.length === 0) { showUnsupportedExternalMediaToast(); return; }
     if (media.length < files.length) {
       showToast('已忽略 ' + (files.length - media.length) + ' 个非图片/视频文件');
     }
@@ -7899,7 +7828,7 @@ async function uploadImagesAtPoint(files, wx, wy) {
     uploaded.forEach((f, i) => {
       let id;
       if (isVideoUpload(f, files[i])) {
-        id = createVideoNode(f.url, f.name, startX + i * GAP, wy - 90);
+        id = createVideoNode(f.url, f.name, startX + i * GAP, wy - 90, null, null, { originLabel: '外部导入：' + (f.name || 'video') });
       } else {
         id = createImageNode(
           f.url,
@@ -7948,7 +7877,7 @@ async function addExternalImagesAsPromptRefs(files) {
   const fileList = Array.from(files || []);
   if (!fileList.length) return;
   const media = fileList.filter(isSupportedExternalMedia);
-  if (media.length === 0) { showToast('仅支持 ' + EXTERNAL_MEDIA_FORMATS_LABEL); return; }
+  if (media.length === 0) { showUnsupportedExternalMediaToast(); return; }
   if (media.length < fileList.length) {
     showToast('已忽略 ' + (fileList.length - media.length) + ' 个非图片/视频文件');
   }
@@ -7990,7 +7919,7 @@ async function addExternalImagesAsPromptRefs(files) {
     const pos = positions[i] || { x: 0, y: 0 };
     const isVideo = isVideoUpload(f, media[i]);
     const id = isVideo
-      ? createVideoNode(f.url, f.name, pos.x, pos.y)
+      ? createVideoNode(f.url, f.name, pos.x, pos.y, null, null, { originLabel: '外部导入：' + (f.name || 'video') })
       : createImageNode(
           f.url, f.name, pos.x, pos.y,
           null, null, null, null,
@@ -8981,13 +8910,14 @@ async function _runGenerationTask(task) {
       const videos = data.videos || [];
       if (videos.length === 0) throw new Error('接口未返回视频');
 
+      const videoOriginLabel = prompt || '';
       const GAP = 20;
       const positions = placeMediaGroupNearViewport(videos.length, 240, 175, GAP, canvasCenter());
       const _media = [];
       videos.forEach((url, i) => {
         const name = '生成视频_' + (i + 1);
         const p = positions[i] || positions[0] || { x: 0, y: 0 };
-        const nid = createVideoNode(url, name, p.x, p.y);
+        const nid = createVideoNode(url, name, p.x, p.y, null, null, { originLabel: videoOriginLabel });
         _media.push({ type: 'video', url, name, nodeId: nid });
       });
       updateConversationMessage(asstMsgId, {
@@ -9235,13 +9165,14 @@ function rerunConversationRequest(userMsg) {
       if (isVideo) {
         const videos = data.videos || [];
         if (videos.length === 0) throw new Error('接口未返回视频');
+        const videoOriginLabel = userMsg.prompt || body.prompt || '';
         const GAP = 20;
         const positions = placeMediaGroupNearViewport(videos.length, 240, 175, GAP, canvasCenter());
         const _media = [];
         videos.forEach((url, i) => {
           const name = '生成视频_' + (i + 1);
           const p = positions[i] || positions[0] || { x: 0, y: 0 };
-          const nid = createVideoNode(url, name, p.x, p.y);
+          const nid = createVideoNode(url, name, p.x, p.y, null, null, { originLabel: videoOriginLabel });
           _media.push({ type: 'video', url, name, nodeId: nid });
         });
         updateConversationMessage(asstMsg.id, {
@@ -9455,7 +9386,7 @@ function insertAssetToCanvas(asset) {
   if (asset.type === 'image') {
     id = createImageNode(asset.url, asset.name, cx - 90, cy - 80);
   } else {
-    id = createVideoNode(asset.url, asset.name, cx - 120, cy - 80);
+    id = createVideoNode(asset.url, asset.name, cx - 120, cy - 80, null, null, asset.prompt ? { originLabel: asset.prompt } : null);
   }
   showToast('已插入画布');
   scheduleSave();
@@ -10163,7 +10094,7 @@ function serializeCanvasV2() {
   });
 
   videoNodes.forEach((n) => {
-    nodes.push({ id: n.id, type: 'video', url: n.url, name: n.name, x: n.x, y: n.y, text: '' });
+    nodes.push({ id: n.id, type: 'video', url: n.url, name: n.name, x: n.x, y: n.y, originLabel: n.originLabel || '', width: n.width || 240, text: '' });
   });
 
   return {
@@ -10287,7 +10218,7 @@ function restoreCanvasV2(data) {
                             (n.mask.alphaUrl || n.mask.visualUrl)) ? n.mask : null;
       createImageNode(n.url, n.name || '', n.x || 0, n.y || 0, n.id, rs, restoredMarkers, restoredMask, { originLabel: n.originLabel || '' });
     } else if (n.type === 'video' && n.url) {
-      createVideoNode(n.url, n.name || '', n.x || 0, n.y || 0, n.id);
+      createVideoNode(n.url, n.name || '', n.x || 0, n.y || 0, n.id, n.width, { originLabel: n.originLabel || '' });
     }
     // Legacy n.type === 'text' nodes are silently ignored (feature removed
     // 2026-05-21). Saving the canvas afterwards drops them permanently.
