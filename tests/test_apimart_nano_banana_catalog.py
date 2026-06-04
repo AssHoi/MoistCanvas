@@ -1,6 +1,8 @@
 import sys
 import unittest
 import asyncio
+import json
+import os
 from pathlib import Path
 
 
@@ -79,6 +81,85 @@ class ApimartNanoBananaCatalogTests(unittest.TestCase):
             self.assertNotIn("google_search", params)
             self.assertNotIn("google_image_search", params)
             self.assertNotIn("official_fallback", params)
+
+    def test_gpt_image_2_official_fallback_catalog_does_not_offer_background(self):
+        image_models = {item["id"]: item for item in main.APIMART_FALLBACK_CATALOG["image"]}
+
+        params = image_models["gpt-image-2-official"]["params"]
+        serialized_params = json.dumps(params, ensure_ascii=False)
+
+        self.assertNotIn("background", params)
+        self.assertNotIn("\u80cc\u666f\u6a21\u5f0f", serialized_params)
+        self.assertNotIn("\u900f\u660e", serialized_params)
+
+    def test_gpt_image_2_official_payload_does_not_forward_background(self):
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "data": {
+                        "result": {
+                            "images": [{"url": "https://cdn.example.com/generated.webp"}]
+                        }
+                    }
+                }
+
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, headers=None, json=None):
+                captured["url"] = url
+                captured["payload"] = dict(json or {})
+                return FakeResponse()
+
+        original_client = main.httpx.AsyncClient
+        env_key = main.provider_key_env("apimart-test")
+        original_env = os.environ.get(env_key)
+        os.environ[env_key] = "test-key"
+        main.httpx.AsyncClient = FakeAsyncClient
+        try:
+            images, _raw = asyncio.run(main.generate_apimart_image(
+                "draw an icon",
+                "1:1",
+                "gpt-image-2-official",
+                [],
+                {"id": "apimart-test", "base_url": "https://api.apimart.ai"},
+                resolution="1k",
+                quality="high",
+                background="transparent",
+                moderation="low",
+                output_format="webp",
+                output_compression=80,
+            ))
+        finally:
+            main.httpx.AsyncClient = original_client
+            if original_env is None:
+                os.environ.pop(env_key, None)
+            else:
+                os.environ[env_key] = original_env
+
+        payload = captured["payload"]
+        self.assertEqual(images[0]["value"], "https://cdn.example.com/generated.webp")
+        self.assertEqual(captured["url"], "https://api.apimart.ai/v1/images/generations")
+        self.assertNotIn("background", payload)
+        self.assertEqual(payload["quality"], "high")
+        self.assertEqual(payload["moderation"], "low")
+        self.assertEqual(payload["output_format"], "webp")
+        self.assertEqual(payload["output_compression"], 80)
 
     def test_canvas_sends_mask_url_for_nano_banana_pro_official(self):
         html = (ROOT / "static" / "canvas.html").read_text(encoding="utf-8")

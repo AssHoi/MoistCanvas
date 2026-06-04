@@ -146,7 +146,7 @@ APP_PORT = 6767
 #
 # GITHUB_REPO must point at "owner/repo". Set it before your first release
 # either by editing the default here or via the MOISTCANVAS_REPO env var.
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 GITHUB_REPO = os.getenv("MOISTCANVAS_REPO", "AssHoi/MoistCanvas").strip().strip("/")
 GITHUB_API_BASE = "https://api.github.com"
 # Temp workspace for downloading/extracting an update. Lives under runtime/
@@ -285,7 +285,6 @@ APIMART_FALLBACK_CATALOG: Dict[str, list] = {
                 "resolution":          {"type": "select", "label": "图片规格", "title": "输出图片规格档位", "options": ["1k","2k","4k"], "default": "1k"},
                 "size":                {"type": "select", "label": "图片比例", "title": "输出图片宽高比例", "options": ["auto","1:1","3:2","2:3","4:3","3:4","5:4","4:5","16:9","9:16","2:1","1:2","3:1","1:3","21:9","9:21"], "option_labels": {"auto": "自动"}, "default": "1:1"},
                 "output_format":       {"type": "select", "label": "图片格式", "title": "输出文件格式", "options": ["png","jpeg","webp"], "default": "png"},
-                "background":          {"type": "select", "label": "背景模式", "title": "背景处理方式：auto 自动，opaque 不透明，transparent 透明", "options": ["auto","opaque","transparent"], "option_labels": {"auto": "自动", "opaque": "不透明", "transparent": "透明"}, "default": "auto"},
                 "moderation":          {"type": "select", "label": "审核强度", "title": "内容安全审核强度：auto 默认，low 较宽松", "options": ["auto","low"], "option_labels": {"auto": "默认", "low": "较宽松"}, "default": "low", "hidden": True},
                 "n":                   {"type": "select", "label": "生成张数", "title": "单次生成图片数量", "options": [1,2,3,4], "default": 1},
                 "quality":             {"type": "select", "label": "图片质量", "title": "输出图片质量", "options": ["auto","low","medium","high"], "option_labels": {"auto": "自动", "low": "低", "medium": "中", "high": "高"}, "default": "auto", "full_width": True},
@@ -1725,8 +1724,6 @@ async def generate_apimart_image(prompt, size, model, reference_images, provider
             payload["resolution"] = resolution
         if supports_gpt_image_options and quality:
             payload["quality"] = quality
-        if supports_gpt_image_options and background:
-            payload["background"] = background
         if supports_gpt_image_options and moderation:
             payload["moderation"] = moderation
         if supports_gpt_image_options and output_format:
